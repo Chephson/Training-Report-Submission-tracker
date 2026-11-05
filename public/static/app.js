@@ -214,8 +214,8 @@ async function refreshBadges() {
 }
 
 const ROUTES = {
-  dashboard: { title: 'Dashboard', sub: 'Who has submitted, at a glance', render: renderDashboard },
-  tracker: { title: 'Submission tracker', sub: 'Every staff member and their report status', render: renderTracker },
+  dashboard: { title: 'Dashboard', sub: 'Report submission progress by training programme', render: renderDashboard },
+  tracker: { title: 'Submission tracker', sub: 'Filter outstanding and submitted reports by training programme', render: renderTracker },
   programmes: { title: 'Programme assignments', sub: 'Manage assignments and outstanding reports', render: renderProgrammes },
   history: { title: 'Staff training history', sub: 'A consolidated record of training programmes reported by staff', render: renderTrainingHistory },
   inbox: { title: 'Unmatched responses', sub: 'Submissions we could not attribute to anyone on the roster', render: renderInbox },
@@ -257,117 +257,33 @@ $('#period-picker').addEventListener('change', (e) => {
 /* ---------------- dashboard ---------------- */
 async function renderDashboard(el) {
   if (!state.periodId) return renderNoPeriod(el)
-
-  const data = await api(`/overview?period=${state.periodId}`)
-  const s = data.stats
-  const period = data.period
-  const rate = pct(s.submitted, s.roster)
-
-  const lateBadge = period?.due_date && s.late > 0 ? ` · <strong>${s.late} after the deadline</strong>` : ''
-  const overdue = period?.due_date ? new Date(period.due_date + 'T23:59:59') < new Date() && s.pending > 0 : false
-
-  $('#topbar-actions').innerHTML = `
-    <button class="btn" id="dash-export">${ico('download', 15)} Export CSV</button>
-    <a class="btn btn-primary" href="#/tracker">Open tracker</a>`
-  $('#dash-export').addEventListener('click', () => downloadFile(`/api/export.csv?period=${state.periodId}`))
-
-  el.innerHTML = `
-    ${!s.roster ? notice('info', 'Your roster is empty', 'Add staff members (or import your staff list) before reports can be matched to anyone. <a href="#/roster">Go to the roster →</a>') : ''}
-    ${s.unmatched > 0 ? notice('warn', `${s.unmatched} response${s.unmatched === 1 ? '' : 's'} could not be matched`, `Someone submitted the form but is not on the roster (or their email/name differs). <a href="#/inbox">Review them in the inbox →</a>`) : ''}
-    ${overdue ? notice('bad', 'The deadline has passed', `${s.pending} staff member${s.pending === 1 ? ' has' : 's have'} not submitted yet. <button class="btn btn-sm" id="chase">Download chase list</button>`) : ''}
-
-    <div class="grid grid-4 mt-16">
-      <div class="card stat stat-accent">
-        <div class="stat-label">Submitted</div>
-        <div class="stat-value">${s.submitted}<small> / ${s.roster}</small></div>
-        <div class="stat-foot">${rate}% of the roster</div>
-      </div>
-      <div class="card stat ${s.pending ? 'stat-warn' : ''}">
-        <div class="stat-label">Outstanding</div>
-        <div class="stat-value" style="${s.pending ? 'color:var(--warn)' : ''}">${s.pending}</div>
-        <div class="stat-foot">${s.pending ? 'Awaiting a report' : 'Everyone has submitted'}</div>
-      </div>
-      <div class="card stat">
-        <div class="stat-label">Deadline</div>
-        <div class="stat-value" style="font-size:19px;margin-top:10px">${period?.due_date ? fmtDate(period.due_date) : 'Not set'}</div>
-        <div class="stat-foot">${period?.due_date ? (overdue ? 'Passed' : `${Math.ceil((new Date(period.due_date + 'T23:59:59') - Date.now()) / 86400000)} days remaining`) : 'Add one in Forms connection'}</div>
-      </div>
-      <div class="card stat">
-        <div class="stat-label">Completion</div>
-        <div class="stat-value">${rate}<small>%</small></div>
-        <div class="bar mt-8${rate < 60 ? ' warn' : ''}"><span style="width:${rate}%"></span></div>
-      </div>
-    </div>
-
-    <div class="grid grid-3-2 mt-16">
-      <div class="card">
-        <div class="card-head">
-          <div><h3>Progress by team</h3><p>${esc(period?.name || '')}</p></div>
-        </div>
-        <div class="card-body">
-          ${
-            data.teams.length
-              ? data.teams
-                  .map((t) => {
-                    const p = pct(t.submitted, t.roster)
-                    return `<div class="team-row">
-                      <div class="tname">${esc(t.team)}</div>
-                      <div class="tcount">${t.submitted}/${t.roster}</div>
-                      <div class="bar${p < 60 ? ' warn' : ''}"><span style="width:${p}%"></span></div>
-                      <div class="tmeta">${p}% complete</div>
-                    </div>`
-                  })
-                  .join('')
-              : `<p class="muted tiny">No teams assigned yet. Add a team to each staff member to see the breakdown.</p>`
-          }
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-head"><div><h3>Recent submissions</h3><p>Latest reports received</p></div></div>
-        <div class="card-body" style="padding-top:8px">
-          ${
-            data.recent.length
-              ? `<div class="feed">${data.recent
-                  .map(
-                    (r) => `<div class="feed-item">
-                      <span class="feed-dot ok"></span>
-                      <div class="feed-body">
-                        <div class="fmain"><strong>${esc(r.full_name)}</strong></div>
-                        <div class="ftime">${esc(r.team || 'No team')} · ${relTime(r.submitted_at)}</div>
-                      </div>
-                    </div>`
-                  )
-                  .join('')}</div>`
-              : `<p class="muted tiny">Nothing yet${period?.form_url ? ' — as soon as someone submits the form it will appear here.' : '.'}</p>`
-          }
-        </div>
-      </div>
-    </div>
-
-    <div class="card mt-16">
-      <div class="card-head"><div><h3>Activity log</h3><p>Everything the tracker has recorded</p></div></div>
-      <div class="card-body">
-        ${
-          data.activity.length
-            ? `<div class="feed">${data.activity
-                .map(
-                  (a) => `<div class="feed-item">
-                    <span class="feed-dot ${a.event === 'unmatched' ? 'warn' : a.event.includes('submission') ? 'ok' : ''}"></span>
-                    <div class="feed-body">
-                      <div class="fmain">${esc(a.detail || a.event)}</div>
-                      <div class="ftime">${fmtDateTime(a.ts)} · ${esc(a.actor || 'system')}</div>
-                    </div>
-                  </div>`
-                )
-                .join('')}</div>`
-            : `<p class="muted tiny">No activity recorded yet.</p>`
-        }
-      </div>
-    </div>`
-
-  const chase = $('#chase')
-  if (chase) chase.addEventListener('click', () => downloadFile(`/api/pending.csv?period=${state.periodId}`))
+  const [pr, overview] = await Promise.all([api('/programmes?period='+state.periodId),api('/overview?period='+state.periodId)])
+  const programmes=pr.programmes||[]
+  const total=programmes.reduce((n,p)=>n+Number(p.assigned||0),0)
+  const submitted=programmes.reduce((n,p)=>n+Number(p.submitted||0),0)
+  const pending=total-submitted
+  const rate=pct(submitted,total)
+  $('#topbar-actions').innerHTML='<a class="btn btn-primary" href="#/tracker">View programme tracker</a><a class="btn" href="#/programmes">Manage assignments</a>'
+  el.innerHTML=
+    (overview.stats?.unmatched ? notice('warn',overview.stats.unmatched+' unmatched response(s)','Review Microsoft Forms submissions that could not be matched. <a href="#/inbox">Open unmatched responses</a>'):'')+
+    '<div class="grid grid-4 mt-16">'+
+    '<div class="card stat stat-accent"><div class="stat-label">Training programmes</div><div class="stat-value">'+programmes.length+'</div><div class="stat-foot">Registered programmes</div></div>'+
+    '<div class="card stat"><div class="stat-label">Assigned reports</div><div class="stat-value">'+total+'</div><div class="stat-foot">Staff–programme assignments</div></div>'+
+    '<div class="card stat"><div class="stat-label">Reports submitted</div><div class="stat-value">'+submitted+'</div><div class="stat-foot">Matched to assignments</div></div>'+
+    '<div class="card stat '+(pending?'stat-warn':'')+'"><div class="stat-label">Outstanding reports</div><div class="stat-value">'+pending+'</div><div class="stat-foot">'+rate+'% completion</div></div></div>'+
+    '<div class="card mt-16"><div class="card-head"><div><h3>Training programme submission progress</h3><p>Reporting period: '+esc(overview.period?.name||'Current')+' · Each assignment counts as one expected report</p></div><button class="btn btn-sm" id="dash-programme-csv">Export programme summary</button></div>'+
+    '<div class="table-wrap"><table><thead><tr><th>Training programme</th><th>Assigned staff</th><th>Submitted</th><th>Outstanding</th><th>Completion</th><th></th></tr></thead><tbody>'+
+    programmes.map(p=>{const rate=pct(p.submitted,p.assigned);return '<tr><td><strong>'+esc(p.name)+'</strong></td><td>'+p.assigned+'</td><td>'+p.submitted+'</td><td><strong>'+p.pending+'</strong></td><td style="min-width:120px"><div class="bar"><span style="width:'+rate+'%"></span></div><small>'+rate+'%</small></td><td><a class="btn btn-sm" href="#/tracker?programme='+p.id+'&status=pending">Outstanding staff</a></td></tr>'}).join('')+
+    (programmes.length?'':'<tr><td colspan="6">No training programmes registered. <a href="#/programmes">Add programmes and assign staff</a>.</td></tr>')+
+    '</tbody></table></div></div>'
+  $('#dash-programme-csv').onclick=()=>downloadProgrammeCSV(programmes)
+}
+function downloadProgrammeCSV(programmes) {
+  const rows=[['Training programme','Assigned staff','Submitted','Outstanding','Completion %'],...programmes.map(p=>[p.name,p.assigned,p.submitted,p.pending,pct(p.submitted,p.assigned)])]
+  const csv=rows.map(row=>row.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n')
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'})
+  const url=URL.createObjectURL(blob),a=document.createElement('a')
+  a.href=url;a.download='training-programme-progress.csv';a.click();URL.revokeObjectURL(url)
 }
 
 function notice(kind, title, body) {
@@ -441,60 +357,32 @@ async function copyText(text) {
 /* ---------------- tracker ---------------- */
 async function renderTracker(el) {
   if (!state.periodId) return renderNoPeriod(el)
-  const period = currentPeriod()
-
-  $('#topbar-actions').innerHTML = `
-    <button class="btn" id="tr-import">${ico('upload', 15)} Import from Forms</button>
-    <button class="btn" id="tr-export">${ico('download', 15)} Export</button>
-    <button class="btn btn-primary" id="tr-add">${ico('plus', 15)} Mark as submitted</button>`
-
-  el.innerHTML = `
-    <div class="card">
-      <div class="toolbar">
-        <input type="search" id="f-q" placeholder="Search name or email…" value="${esc(state.filters.q)}" />
-        <select id="f-team"><option value="">All teams</option></select>
-        <div class="seg" id="f-status">
-          <button data-s="all" class="${state.filters.status === 'all' ? 'on' : ''}">All</button>
-          <button data-s="pending" class="${state.filters.status === 'pending' ? 'on' : ''}">Outstanding</button>
-          <button data-s="submitted" class="${state.filters.status === 'submitted' ? 'on' : ''}">Submitted</button>
-        </div>
-        <div class="right tiny muted" id="tr-count"></div>
-      </div>
-      <div id="tr-table"></div>
-    </div>`
-
-  $('#tr-add').addEventListener('click', () => manualMarkModal())
-  $('#tr-export').addEventListener('click', () => downloadFile(`/api/export.csv?period=${state.periodId}`))
-  $('#tr-import').addEventListener('click', () => importModal())
-
-  const debounce = (fn, ms) => {
-    let t
-    return (...a) => {
-      clearTimeout(t)
-      t = setTimeout(() => fn(...a), ms)
-    }
+  const pr=await api('/programmes?period='+state.periodId)
+  const programmes=pr.programmes||[]
+  const params=new URLSearchParams(location.hash.split('?')[1]||'')
+  let selected=Number(params.get('programme'))||0
+  let status=params.get('status')||'all'
+  $('#topbar-actions').innerHTML='<a class="btn btn-primary" href="#/programmes">Manage programme assignments</a>'
+  el.innerHTML='<div class="card"><div class="toolbar" style="display:flex;gap:10px;flex-wrap:wrap">'+
+    '<label class="field" style="min-width:250px;flex:1"><span>Training programme</span><select id="tr-programme"><option value="">All training programmes</option>'+programmes.map(p=>'<option value="'+p.id+'" '+(p.id===selected?'selected':'')+'>'+esc(p.name)+'</option>').join('')+'</select></label>'+
+    '<label class="field" style="min-width:150px"><span>Report status</span><select id="tr-status"><option value="all">All assigned</option><option value="pending" '+(status==='pending'?'selected':'')+'>Outstanding</option><option value="submitted" '+(status==='submitted'?'selected':'')+'>Submitted</option></select></label>'+
+    '<label class="field" style="min-width:200px"><span>Search staff</span><input type="search" id="tr-search" placeholder="Name, email or team"></label>'+
+    '<button class="btn" id="tr-export-programme">Export filtered CSV</button></div><div id="tr-programme-summary" class="card-body"></div><div id="tr-table"></div></div>'
+  async function refresh(){
+    const programmeId=Number($('#tr-programme').value),status=$('#tr-status').value,q=$('#tr-search').value.toLowerCase().trim()
+    const selectedProgrammes=programmeId?programmes.filter(p=>p.id===programmeId):programmes
+    const results=await Promise.all(selectedProgrammes.map(p=>api('/programme-progress?period='+state.periodId+'&programme_id='+p.id)))
+    let rows=results.flatMap((d,i)=>(d.rows||[]).map(r=>({...r,programme:selectedProgrammes[i].name,programme_id:selectedProgrammes[i].id})))
+    rows=rows.filter(r=>(status==='all'||(status==='submitted'?!!r.submitted_at:!r.submitted_at))&&(!q||[r.full_name,r.email,r.team,r.programme].some(x=>String(x||'').toLowerCase().includes(q))))
+    const assigned=results.reduce((n,d)=>n+d.assigned,0),submitted=results.reduce((n,d)=>n+d.submitted,0)
+    $('#tr-programme-summary').innerHTML='<strong>'+selectedProgrammes.length+' programme(s) · '+assigned+' assigned · '+submitted+' submitted · '+(assigned-submitted)+' outstanding</strong><p class="muted tiny">'+rows.length+' matching staff–programme assignments shown below</p>'
+    $('#tr-table').innerHTML='<div class="table-wrap"><table><thead><tr><th>Training programme</th><th>Staff member</th><th>Email</th><th>Team</th><th>Report status</th><th>Date submitted</th></tr></thead><tbody>'+rows.map(r=>'<tr><td>'+esc(r.programme)+'</td><td><strong>'+esc(r.full_name)+'</strong></td><td>'+esc(r.email)+'</td><td>'+esc(r.team||'—')+'</td><td>'+(r.submitted_at?'Submitted':'Outstanding')+'</td><td>'+(r.submitted_at?fmtDateTime(r.submitted_at):'—')+'</td></tr>').join('')+(rows.length?'':'<tr><td colspan="6">No assignments match these filters.</td></tr>')+'</tbody></table></div>'
+    $('#tr-export-programme').onclick=()=>{const cols=[['Training programme','Staff member','Email','Team','Status','Submitted at'],...rows.map(r=>[r.programme,r.full_name,r.email,r.team||'',r.submitted_at?'Submitted':'Outstanding',r.submitted_at||''])];const csv=cols.map(row=>row.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='programme-report-status.csv';a.click();URL.revokeObjectURL(url)}
   }
-
-  $('#f-q').addEventListener(
-    'input',
-    debounce((e) => {
-      state.filters.q = e.target.value.trim()
-      loadTrackerTable()
-    }, 220)
-  )
-  $('#f-team').addEventListener('change', (e) => {
-    state.filters.team = e.target.value
-    loadTrackerTable()
-  })
-  $$('#f-status button').forEach((b) =>
-    b.addEventListener('click', () => {
-      state.filters.status = b.dataset.s
-      $$('#f-status button').forEach((x) => x.classList.toggle('on', x === b))
-      loadTrackerTable()
-    })
-  )
-
-  await loadTrackerTable()
+  $('#tr-programme').onchange=refresh
+  $('#tr-status').onchange=refresh
+  $('#tr-search').oninput=refresh
+  await refresh()
 }
 
 async function loadTrackerTable() {
