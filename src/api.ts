@@ -409,6 +409,17 @@ api.get('/programme-progress', async (c) => {
   return c.json({rows:records,assigned:records.length,submitted,pending:records.length-submitted})
 })
 
+api.get('/unassigned-submissions', async (c) => {
+  const periodId = Number(c.req.query('period')) || (await defaultPeriod(c.env.DB))?.id || 0
+  const rows = await c.env.DB.prepare(`SELECT s.id, st.full_name, st.email, s.training_programme, s.submitted_at, s.source
+    FROM submissions s JOIN staff st ON st.id=s.staff_id WHERE s.period_id=?
+    AND NOT EXISTS (SELECT 1 FROM programme_assignments a JOIN programmes p ON p.id=a.programme_id
+      WHERE a.period_id=s.period_id AND a.staff_id=s.staff_id
+      AND LOWER(TRIM(p.name))=LOWER(TRIM(s.training_programme)))
+    ORDER BY s.submitted_at DESC`).bind(periodId).all()
+  return c.json({submissions:rows.results||[]})
+})
+
 /* ---------------- staff training history ---------------- */
 api.get('/training-history', async (c) => {
   const db = c.env.DB
