@@ -784,6 +784,35 @@ async function renderProgrammes(el) {
   const [pr,sr,ar]=await Promise.all([api('/programmes?period='+period),api('/staff'),api('/programme-assignments?period='+period)])
   const programmes=pr.programmes||[], staff=sr.staff||[]
   el.innerHTML='<div class="card"><div class="card-head"><h3>Training programmes and assignments</h3></div><div class="card-body"><label class="field"><span>New programme</span><input id="pg-name" placeholder="Enter programme name"></label><button class="btn btn-primary" id="pg-add">Add programme</button><hr><label class="field"><span>Programme to assign</span><select id="pg-choice">'+programmes.map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select></label><p>Select staff members (each can attend multiple programmes):</p><label class="field"><span>Search staff by name or email</span><input id="pg-staff-search" type="search" placeholder="Type a name or email"></label><div style="max-height:220px;overflow:auto">'+staff.map(st=>'<label style="display:block;padding:5px"><input type="checkbox" class="pg-staff" value="'+st.id+'"> '+esc(st.full_name)+' — '+esc(st.email)+'</label>').join('')+'</div><button class="btn btn-primary mt-12" id="pg-assign">Assign selected staff</button></div></div><div class="card mt-16"><div class="card-head"><h3>Programme reporting status</h3></div><div class="table-wrap"><table><thead><tr><th>Programme</th><th>Assigned</th><th>Submitted</th><th>Outstanding</th><th></th></tr></thead><tbody>'+programmes.map(p=>'<tr><td>'+esc(p.name)+'</td><td>'+p.assigned+'</td><td>'+p.submitted+'</td><td><strong>'+p.pending+'</strong></td><td><button class="btn btn-sm pg-view" data-id="'+p.id+'">View staff</button></td></tr>').join('')+'</tbody></table></div></div><div id="pg-detail" class="mt-16"></div>'
+  const toolsPanel=document.createElement('div')
+  toolsPanel.className='card mt-16'
+  toolsPanel.innerHTML='<div class="card-head"><h3>Programme administration</h3></div><div class="card-body"><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"><button class="btn" id="pg-tab-import">Import staff assignments</button><button class="btn" id="pg-tab-rename">Edit programme name</button></div><div id="pg-tools-content"></div></div>'
+  el.insertBefore(toolsPanel,el.querySelector('.card.mt-16'))
+  const panel=$('#pg-tools-content')
+  $('#pg-tab-import').onclick=()=>{
+    panel.innerHTML='<p>Upload a CSV or XLSX file containing <strong>Training Programme</strong> and <strong>Staff Email</strong> (or <strong>Staff Name</strong>). New programme names will be created automatically. Existing assignments are not duplicated.</p><p><a id="pg-template" href="#">Download CSV template</a></p><label class="field"><span>Assignment file</span><input type="file" id="pg-import-file" accept=".csv,.xlsx"></label><button class="btn btn-primary" id="pg-import-run">Import assignments</button><div id="pg-import-result" class="mt-12"></div>'
+    $('#pg-template').onclick=e=>{e.preventDefault();const blob=new Blob(['Training Programme,Staff Email,Staff Name\\r\\n'],{type:'text/csv'});const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download='programme-assignments-template.csv';link.click();URL.revokeObjectURL(url)}
+    $('#pg-import-run').onclick=async()=>{
+      const file=$('#pg-import-file').files[0]
+      if(!file){toast('Select a CSV or XLSX file',true);return}
+      const btn=$('#pg-import-run');btn.disabled=true
+      try {
+        const res=await fetch('/api/programme-assignments/import?period='+period,{method:'POST',credentials:'same-origin',headers:{'Content-Type':/\\.xlsx$/i.test(file.name)?'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'text/csv'},body:file})
+        const data=await res.json()
+        if(!res.ok)throw new Error(data.error||'Import failed')
+        const box=$('#pg-import-result')
+        box.innerHTML='<p><strong>'+data.added+' assignments added</strong>; '+data.duplicates+' already existed; '+data.errors.length+' rows need attention.</p>'+data.errors.slice(0,30).map(x=>'<p>Row '+x.row+': '+esc(x.reason)+'</p>').join('')+(data.errors.length>30?'<p>Only first 30 errors shown.</p>':'')+'<button class="btn" id="pg-import-refresh">Refresh programme counts</button>'
+        $('#pg-import-refresh').onclick=()=>renderProgrammes(el)
+      }catch(e){toast(e.message,true)}finally{btn.disabled=false}
+    }
+  }
+  $('#pg-tab-rename').onclick=()=>{
+    panel.innerHTML='<label class="field"><span>Select programme</span><select id="pg-rename-id">'+programmes.map(x=>'<option value="'+x.id+'">'+esc(x.name)+'</option>').join('')+'</select></label><label class="field"><span>New programme name</span><input id="pg-rename-name" placeholder="Enter corrected programme name"></label><button class="btn btn-primary" id="pg-rename-save">Save programme name</button><p class="muted">Existing assignments remain attached to the programme. Previously submitted reports keep their original programme text.</p>'
+    $('#pg-rename-id').onchange=()=>{$('#pg-rename-name').value=programmes.find(x=>String(x.id)===$('#pg-rename-id').value)?.name||''}
+    $('#pg-rename-id').onchange()
+    $('#pg-rename-save').onclick=async()=>{try{await api('/programmes/'+$('#pg-rename-id').value,{method:'PATCH',body:JSON.stringify({name:$('#pg-rename-name').value})});toast('Programme name updated');renderProgrammes(el)}catch(e){toast(e.message,true)}}
+  }
+  $('#pg-tab-import').click()
   $('#pg-staff-search').oninput=e=>{const q=e.target.value.trim().toLowerCase();$('.pg-staff').forEach(x=>{const row=x.closest('label');row.style.display=row.textContent.toLowerCase().includes(q)?'block':'none'})}
   $('#pg-add').onclick=async()=>{try{await api('/programmes',{method:'POST',body:JSON.stringify({name:$('#pg-name').value.trim()})});toast('Programme created');renderProgrammes(el)}catch(e){toast(e.message,true)}}
   $('#pg-assign').onclick=async()=>{const programme_id=Number($('#pg-choice').value),staff_ids=Array.from(document.querySelectorAll('.pg-staff')).filter(x=>x.checked).map(x=>Number(x.value));try{const r=await api('/programme-assignments',{method:'POST',body:JSON.stringify({programme_id,staff_ids,period_id:period})});toast(r.added+' staff assignments added');renderProgrammes(el)}catch(e){toast(e.message,true)}}
