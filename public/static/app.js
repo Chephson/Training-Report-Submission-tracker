@@ -216,6 +216,7 @@ async function refreshBadges() {
 const ROUTES = {
   dashboard: { title: 'Dashboard', sub: 'Who has submitted, at a glance', render: renderDashboard },
   tracker: { title: 'Submission tracker', sub: 'Every staff member and their report status', render: renderTracker },
+  programmes: { title: 'Programme assignments', sub: 'Manage assignments and outstanding reports', render: renderProgrammes },
   history: { title: 'Staff training history', sub: 'A consolidated record of training programmes reported by staff', render: renderTrainingHistory },
   inbox: { title: 'Unmatched responses', sub: 'Submissions we could not attribute to anyone on the roster', render: renderInbox },
   roster: { title: 'Staff roster', sub: 'The people required to submit reports', render: renderRoster },
@@ -887,6 +888,17 @@ async function renderInbox(el) {
   )
 }
 
+
+async function renderProgrammes(el) {
+  const period=Number(state.periodId)
+  const [pr,sr,ar]=await Promise.all([api('/programmes?period='+period),api('/staff'),api('/programme-assignments?period='+period)])
+  const programmes=pr.programmes||[], staff=sr.staff||[]
+  el.innerHTML='<div class="card"><div class="card-head"><h3>Training programmes and assignments</h3></div><div class="card-body"><label class="field"><span>New programme</span><input id="pg-name" placeholder="Enter programme name"></label><button class="btn btn-primary" id="pg-add">Add programme</button><hr><label class="field"><span>Programme to assign</span><select id="pg-choice">'+programmes.map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select></label><p>Select staff members (each can attend multiple programmes):</p><div style="max-height:220px;overflow:auto">'+staff.map(st=>'<label style="display:block;padding:5px"><input type="checkbox" class="pg-staff" value="'+st.id+'"> '+esc(st.full_name)+' — '+esc(st.email)+'</label>').join('')+'</div><button class="btn btn-primary mt-12" id="pg-assign">Assign selected staff</button></div></div><div class="card mt-16"><div class="card-head"><h3>Programme reporting status</h3></div><div class="table-wrap"><table><thead><tr><th>Programme</th><th>Assigned</th><th>Submitted</th><th>Outstanding</th><th></th></tr></thead><tbody>'+programmes.map(p=>'<tr><td>'+esc(p.name)+'</td><td>'+p.assigned+'</td><td>'+p.submitted+'</td><td><strong>'+p.pending+'</strong></td><td><button class="btn btn-sm pg-view" data-id="'+p.id+'">View staff</button></td></tr>').join('')+'</tbody></table></div></div><div id="pg-detail" class="mt-16"></div>'
+  $('#pg-add').onclick=async()=>{try{await api('/programmes',{method:'POST',body:JSON.stringify({name:$('#pg-name').value.trim()})});toast('Programme created');renderProgrammes(el)}catch(e){toast(e.message,true)}}
+  $('#pg-assign').onclick=async()=>{const programme_id=Number($('#pg-choice').value),staff_ids=$('.pg-staff').filter(x=>x.checked).map(x=>Number(x.value));try{const r=await api('/programme-assignments',{method:'POST',body:JSON.stringify({programme_id,staff_ids,period_id:period})});toast(r.added+' staff assignments added');renderProgrammes(el)}catch(e){toast(e.message,true)}}
+  $('.pg-view').forEach(b=>b.onclick=async()=>{const data=await api('/programme-progress?period='+period+'&programme_id='+b.dataset.id);$('#pg-detail').innerHTML='<div class="card"><div class="card-head"><h3>Assigned staff: '+data.assigned+' · Submitted: '+data.submitted+' · Outstanding: '+data.pending+'</h3></div><div class="table-wrap"><table><thead><tr><th>Staff</th><th>Email</th><th>Status</th><th></th></tr></thead><tbody>'+data.rows.map(x=>'<tr><td>'+esc(x.full_name)+'</td><td>'+esc(x.email)+'</td><td>'+(x.submitted_at?'Submitted':'Outstanding')+'</td><td><button class="btn btn-sm pg-remove" data-id="'+x.id+'">Unassign</button></td></tr>').join('')+'</tbody></table></div></div>';$('.pg-remove').forEach(x=>x.onclick=async()=>{if(!confirm('Remove assignment? Existing submissions will be kept.'))return;await api('/programme-assignments/'+x.dataset.id,{method:'DELETE'});renderProgrammes(el)})})
+}
+
 /* ---------------- roster ---------------- */
 async function renderTrainingHistory(el) {
   const params = new URLSearchParams()
@@ -1177,12 +1189,13 @@ async function renderSetup(el) {
             <div class="step-num">4</div>
             <div>
               <h4>Send it to this tracker</h4>
-              <p>Add an <strong>HTTP</strong> action → <em>POST</em>. Paste your intake address from Step 1 as the URI, set <em>Body</em> to the JSON below, and leave <em>Headers</em> empty (the JSON body carries the content type).</p>
+              <p>Add an <strong>HTTP</strong> action → <em>POST</em>. Paste your intake address from Step 1 as the URI, set <em>Body</em> to the JSON below, and set the HTTP header <code>Content-Type</code> to <code>application/json</code>. Map the training programme answer using Microsoft Forms dynamic content.</p>
               <pre class="code" id="wh-body">{
   "email": "@{outputs('Get_response_details')?['body/responder']}",
   "full_name": "@{outputs('Get_response_details')?['body/responderName']}",
   "submitted_at": "@{utcNow()}",
-  "response_id": "@{outputs('Get_response_details')?['body/responseId']}"
+  "response_id": "@{outputs('Get_response_details')?['body/responseId']}",
+  "training_programme": "INSERT TRAINING PROGRAMME DYNAMIC CONTENT"
 }</pre>
               <button class="btn btn-sm mt-8" id="wh-body-copy">${ico('copy', 14)} Copy JSON</button>
               <p class="tiny muted mt-8"><strong>Names must match your flow exactly.</strong> If your flow names the “Get response details” step differently, replace <span class="mono">Get_response_details</span> in the JSON with that step name. If the responder fields come back empty, insert them with the dynamic-content picker from that step and paste the rest of the JSON around them.</p>
