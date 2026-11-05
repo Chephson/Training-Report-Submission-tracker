@@ -52,6 +52,7 @@ const shell = (title: string) => `<!DOCTYPE html>
       <nav class="nav" aria-label="Main">
         <a href="#/dashboard" data-view="dashboard"><i data-i="dashboard"></i>Dashboard</a>
         <a href="#/tracker" data-view="tracker"><i data-i="tracker"></i>Submission tracker</a>
+        <a href="#/programmes" data-view="programmes"><i data-i="tracker"></i>Programme assignments</a>
         <a href="#/history" data-view="history"><i data-i="roster"></i>Staff training history</a>
         <a href="#/inbox" data-view="inbox"><i data-i="inbox"></i>Unmatched<span class="pill" id="nav-inbox-count" hidden>0</span></a>
         <a href="#/roster" data-view="roster"><i data-i="roster"></i>Staff roster</a>
