@@ -365,9 +365,13 @@ api.patch('/programmes/:id', async (c) => {
   if (!name) return c.json({error:'Enter a programme name.'},400)
   const existing=await c.env.DB.prepare('SELECT id FROM programmes WHERE LOWER(TRIM(name))=LOWER(TRIM(?)) AND id<>?').bind(name,id).first()
   if (existing) return c.json({error:'Another programme already uses this name.'},409)
+  const original=await c.env.DB.prepare('SELECT name FROM programmes WHERE id=?').bind(id).first<{name:string}>()
+  if(!original)return c.json({error:'Programme not found.'},404)
   const result=await c.env.DB.prepare('UPDATE programmes SET name=? WHERE id=?').bind(name,id).run()
-  if (!result.meta.changes) return c.json({error:'Programme not found or unchanged.'},404)
-  return c.json({ok:true})
+  // Keep previously matched reports linked after correcting a programme title.
+  const updated=await c.env.DB.prepare('UPDATE submissions SET training_programme=? WHERE LOWER(TRIM(training_programme))=LOWER(TRIM(?))').bind(name,original.name).run()
+  await log(c.env.DB,'programme.renamed',`Programme #${id}: "${original.name}" → "${name}"; updated ${updated.meta.changes||0} report labels`,'admin')
+  return c.json({ok:true,updated_submissions:updated.meta.changes||0})
 })
 
 api.post('/programme-assignments/import', async (c) => {
