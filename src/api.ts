@@ -358,6 +358,69 @@ api.post('/programmes', async (c) => {
   return c.json({ok:true,id:result.meta.last_row_id},201)
 })
 
+api.patch('/programmes/:id', async (c) => {
+  const id=Number(c.req.param('id'))
+  const body=await c.req.json<{name?:string}>().catch(()=>({name:''}))
+  const name=body.name?.trim()
+  if (!name) return c.json({error:'Enter a programme name.'},400)
+  const existing=await c.env.DB.prepare('SELECT id FROM programmes WHERE LOWER(TRIM(name))=LOWER(TRIM(?)) AND id<>?').bind(name,id).first()
+  if (existing) return c.json({error:'Another programme already uses this name.'},409)
+  const result=await c.env.DB.prepare('UPDATE programmes SET name=? WHERE id=?').bind(name,id).run()
+  if (!result.meta.changes) return c.json({error:'Programme not found or unchanged.'},404)
+  return c.json({ok:true})
+})
+
+api.post('/programme-assignments/import', async (c) => {
+  const periodId=Number(c.req.query('period')) || (await defaultPeriod(c.env.DB))?.id || 0
+  const period=await c.env.DB.prepare('SELECT id FROM periods WHERE id=?').bind(periodId).first()
+  if (!period) return c.json({error:'Select a valid reporting period.'},400)
+  const ctype=c.req.header('content-type')||''
+  let headers:string[]=[],rows:string[][]=[]
+  try {
+    if (ctype.includes('spreadsheetml')||ctype.includes('octet-stream')) {
+      ;({headers,rows}=parseXlsx(new Uint8Array(await c.req.arrayBuffer())))
+    } else { ;({headers,rows}=parseDelimited(await c.req.text())) }
+  } catch { return c.json({error:'Unable to read the CSV/XLSX file.'},400) }
+  if (rows.length>2000) return c.json({error:'Maximum 2,000 rows per import.'},400)
+  const normal=(s:string)=>s.toLowerCase().replace(/[^a-z0-9]/g,'')
+  const cols=headers.map(normal)
+  const col=(...names:string[])=>cols.findIndex(x=>names.includes(x))
+  const progCol=col('trainingprogramme','programme','programname','programmename','trainingprogram')
+  const emailCol=col('email','emailaddress','staffemail','staffemailaddress')
+  const nameCol=col('staffname','fullname','name','staffmember')
+  if (progCol<0||(emailCol<0&&nameCol<0)) return c.json({error:'File must contain Training Programme and Staff Email or Staff Name columns.'},400)
+  const staffRows=await c.env.DB.prepare('SELECT id,email,full_name FROM staff').all<{id:number;email:string;full_name:string}>()
+  const staff=staffRows.results||[]
+  const normName=(s:string)=>s.trim().replace(/\s+/g,' ').toLowerCase()
+  let added=0,duplicates=0
+  const errors:{row:number;reason:string}[]=[]
+  const known=new Map<string,number>()
+  const programmes=await c.env.DB.prepare('SELECT id,name FROM programmes').all<{id:number;name:string}>()
+  for (const p of programmes.results||[]) known.set(normName(p.name),p.id)
+  for (let i=0;i<rows.length;i++) {
+    const r=rows[i],programme=(r[progCol]||'').trim(),email=emailCol>=0?(r[emailCol]||'').trim().toLowerCase():'',name=nameCol>=0?(r[nameCol]||'').trim():''
+    if (!programme||(!email&&!name)){errors.push({row:i+2,reason:'Missing programme or staff identity'});continue}
+    let matches=email?staff.filter(s=>s.email.trim().toLowerCase()===email):[]
+    if (!matches.length&&name) matches=staff.filter(s=>normName(s.full_name)===normName(name))
+    if (matches.length!==1){errors.push({row:i+2,reason:matches.length?'Ambiguous staff name':'Staff not found on roster'});continue}
+    let programmeId=known.get(normName(programme))
+    if (!programmeId) {
+      const ins=await c.env.DB.prepare('INSERT OR IGNORE INTO programmes (name) VALUES (?)').bind(programme).run()
+      if (ins.meta.changes) programmeId=Number(ins.meta.last_row_id)
+      else {
+        const found=await c.env.DB.prepare('SELECT id FROM programmes WHERE LOWER(TRIM(name))=LOWER(TRIM(?))').bind(programme).first<{id:number}>()
+        programmeId=found?.id
+      }
+      if (!programmeId){errors.push({row:i+2,reason:'Could not create programme'});continue}
+      known.set(normName(programme),programmeId)
+    }
+    const ins=await c.env.DB.prepare('INSERT OR IGNORE INTO programme_assignments (programme_id,staff_id,period_id) VALUES (?,?,?)').bind(programmeId,matches[0].id,periodId).run()
+    if(ins.meta.changes)added++;else duplicates++
+  }
+  await log(c.env.DB,'programme.assignments.import',`Imported ${added} assignments for period #${periodId}`,'admin')
+  return c.json({ok:true,total:rows.length,added,duplicates,errors})
+})
+
 api.get('/programme-assignments', async (c) => {
   const periodId = Number(c.req.query('period')) || (await defaultPeriod(c.env.DB))?.id || 0
   const rows = await c.env.DB.prepare(`SELECT a.id,a.programme_id,a.staff_id,a.period_id,
