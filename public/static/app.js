@@ -791,7 +791,7 @@ async function renderProgrammes(el) {
   const panel=$('#pg-tools-content')
   $('#pg-tab-import').onclick=()=>{
     panel.innerHTML='<p>Upload a CSV or XLSX file containing <strong>Training Programme</strong> and <strong>Staff Email</strong> (or <strong>Staff Name</strong>). New programme names will be created automatically. Existing assignments are not duplicated.</p><p><a id="pg-template" href="#">Download CSV template</a></p><label class="field"><span>Assignment file</span><input type="file" id="pg-import-file" accept=".csv,.xlsx"></label><button class="btn btn-primary" id="pg-import-run">Import assignments</button><div id="pg-import-result" class="mt-12"></div>'
-    $('#pg-template').onclick=e=>{e.preventDefault();const blob=new Blob(['Training Programme,Staff Email,Staff Name\\r\\n'],{type:'text/csv'});const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download='programme-assignments-template.csv';link.click();URL.revokeObjectURL(url)}
+    $('#pg-template').onclick=e=>{e.preventDefault();const blob=new Blob(['Training Programme,Staff Email,Staff Name\r\n'],{type:'text/csv'});const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download='programme-assignments-template.csv';link.click();URL.revokeObjectURL(url)}
     $('#pg-import-run').onclick=async()=>{
       const file=$('#pg-import-file').files[0]
       if(!file){toast('Select a CSV or XLSX file',true);return}
