@@ -337,6 +337,78 @@ api.get('/overview', async (c) => {
   })
 })
 
+/* ---------------- programme catalogue and assignments ---------------- */
+api.get('/programmes', async (c) => {
+  const periodId = Number(c.req.query('period')) || (await defaultPeriod(c.env.DB))?.id || 0
+  const rows = await c.env.DB.prepare(`SELECT p.*,
+    (SELECT COUNT(*) FROM programme_assignments a WHERE a.programme_id=p.id AND a.period_id=?) AS assigned,
+    (SELECT COUNT(*) FROM programme_assignments a WHERE a.programme_id=p.id AND a.period_id=?
+      AND EXISTS (SELECT 1 FROM submissions s WHERE s.staff_id=a.staff_id AND s.period_id=a.period_id
+      AND LOWER(TRIM(s.training_programme))=LOWER(TRIM(p.name)))) AS submitted
+    FROM programmes p ORDER BY p.name COLLATE NOCASE`).bind(periodId,periodId).all()
+  return c.json({ programmes: (rows.results || []).map((p: any) => ({ ...p, pending: p.assigned-p.submitted })) })
+})
+
+api.post('/programmes', async (c) => {
+  const b = await c.req.json<{name?:string; description?:string}>()
+  const name = b.name?.trim()
+  if (!name) return c.json({error:'Programme name is required.'},400)
+  const result = await c.env.DB.prepare('INSERT OR IGNORE INTO programmes (name,description) VALUES (?,?)').bind(name,b.description || null).run()
+  if (!result.meta.changes) return c.json({error:'Programme already exists.'},409)
+  return c.json({ok:true,id:result.meta.last_row_id},201)
+})
+
+api.get('/programme-assignments', async (c) => {
+  const periodId = Number(c.req.query('period')) || (await defaultPeriod(c.env.DB))?.id || 0
+  const rows = await c.env.DB.prepare(`SELECT a.id,a.programme_id,a.staff_id,a.period_id,
+    p.name AS training_programme,st.full_name,st.email,st.team,
+    (SELECT MIN(s.submitted_at) FROM submissions s WHERE s.staff_id=a.staff_id AND s.period_id=a.period_id
+     AND LOWER(TRIM(s.training_programme))=LOWER(TRIM(p.name))) AS submitted_at
+    FROM programme_assignments a JOIN programmes p ON p.id=a.programme_id
+    JOIN staff st ON st.id=a.staff_id WHERE a.period_id=?
+    ORDER BY p.name COLLATE NOCASE,st.full_name COLLATE NOCASE`).bind(periodId).all()
+  return c.json({assignments:rows.results || []})
+})
+
+api.post('/programme-assignments', async (c) => {
+  const b = await c.req.json<{programme_id?:number;staff_ids?:number[];period_id?:number}>()
+  const periodId = b.period_id || (await defaultPeriod(c.env.DB))?.id
+  if (!periodId || !b.programme_id || !Array.isArray(b.staff_ids) || !b.staff_ids.length)
+    return c.json({error:'Select a programme, reporting period and staff members.'},400)
+  const programme = await c.env.DB.prepare('SELECT id FROM programmes WHERE id=?').bind(b.programme_id).first()
+  const period = await c.env.DB.prepare('SELECT id FROM periods WHERE id=?').bind(periodId).first()
+  if (!programme || !period) return c.json({error:'Unknown programme or reporting period.'},404)
+  let added=0
+  for (const id of [...new Set(b.staff_ids.map(Number).filter(Number.isInteger))]) {
+    const staff = await c.env.DB.prepare('SELECT id FROM staff WHERE id=?').bind(id).first()
+    if (!staff) continue
+    const res=await c.env.DB.prepare('INSERT OR IGNORE INTO programme_assignments (programme_id,staff_id,period_id) VALUES (?,?,?)')
+      .bind(b.programme_id,id,periodId).run()
+    added += res.meta.changes || 0
+  }
+  return c.json({ok:true,added})
+})
+
+api.delete('/programme-assignments/:id', async (c) => {
+  await c.env.DB.prepare('DELETE FROM programme_assignments WHERE id=?').bind(Number(c.req.param('id'))).run()
+  return c.json({ok:true})
+})
+
+api.get('/programme-progress', async (c) => {
+  const periodId = Number(c.req.query('period')) || (await defaultPeriod(c.env.DB))?.id || 0
+  const programmeId = Number(c.req.query('programme_id')) || 0
+  if (!programmeId) return c.json({error:'Select a programme.'},400)
+  const rows=await c.env.DB.prepare(`SELECT a.id,st.id AS staff_id,st.full_name,st.email,st.team,
+    (SELECT MIN(s.submitted_at) FROM submissions s WHERE s.staff_id=a.staff_id AND s.period_id=a.period_id
+      AND LOWER(TRIM(s.training_programme))=LOWER(TRIM(p.name))) AS submitted_at
+    FROM programme_assignments a JOIN staff st ON st.id=a.staff_id
+    JOIN programmes p ON p.id=a.programme_id
+    WHERE a.period_id=? AND a.programme_id=? ORDER BY st.full_name COLLATE NOCASE`).bind(periodId,programmeId).all()
+  const records=rows.results || []
+  const submitted=records.filter((r:any)=>r.submitted_at).length
+  return c.json({rows:records,assigned:records.length,submitted,pending:records.length-submitted})
+})
+
 /* ---------------- staff training history ---------------- */
 api.get('/training-history', async (c) => {
   const db = c.env.DB
