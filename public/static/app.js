@@ -257,8 +257,9 @@ $('#period-picker').addEventListener('change', (e) => {
 /* ---------------- dashboard ---------------- */
 async function renderDashboard(el) {
   if (!state.periodId) return renderNoPeriod(el)
-  const [pr, overview] = await Promise.all([api('/programmes?period='+state.periodId),api('/overview?period='+state.periodId)])
+  const [pr, overview, extra] = await Promise.all([api('/programmes?period='+state.periodId),api('/overview?period='+state.periodId),api('/unassigned-submissions?period='+state.periodId)])
   const programmes=pr.programmes||[]
+  const unassigned=extra.submissions||[]
   const total=programmes.reduce((n,p)=>n+Number(p.assigned||0),0)
   const submitted=programmes.reduce((n,p)=>n+Number(p.submitted||0),0)
   const pending=total-submitted
@@ -275,7 +276,8 @@ async function renderDashboard(el) {
     '<div class="table-wrap"><table><thead><tr><th>Training programme</th><th>Assigned staff</th><th>Submitted</th><th>Outstanding</th><th>Completion</th><th></th></tr></thead><tbody>'+
     programmes.map(p=>{const rate=pct(p.submitted,p.assigned);return '<tr><td><strong>'+esc(p.name)+'</strong></td><td>'+p.assigned+'</td><td>'+p.submitted+'</td><td><strong>'+p.pending+'</strong></td><td style="min-width:120px"><div class="bar"><span style="width:'+rate+'%"></span></div><small>'+rate+'%</small></td><td><a class="btn btn-sm" href="#/tracker?programme='+p.id+'&status=pending">Outstanding staff</a></td></tr>'}).join('')+
     (programmes.length?'':'<tr><td colspan="6">No training programmes registered. <a href="#/programmes">Add programmes and assign staff</a>.</td></tr>')+
-    '</tbody></table></div></div>'
+    '</tbody></table></div></div>'+ 
+    '<div class="card mt-16"><div class="card-head"><div><h3>Additional training reports received</h3><p>Reports without staff-programme assignments; outstanding counts remain unchanged.</p></div><strong>'+unassigned.length+' received</strong></div><div class="table-wrap"><table><thead><tr><th>Staff</th><th>Training programme</th><th>Submitted</th><th>Source</th></tr></thead><tbody>'+unassigned.map(r=>'<tr><td>'+esc(r.full_name)+'</td><td>'+esc(r.training_programme)+'</td><td>'+esc(fmtDateTime(r.submitted_at))+'</td><td>'+esc(r.source)+'</td></tr>').join('')+(unassigned.length?'':'<tr><td colspan="4">No additional reports for this reporting period.</td></tr>')+'</tbody></table></div></div>'
   $('#dash-programme-csv').onclick=()=>downloadProgrammeCSV(programmes)
 }
 function downloadProgrammeCSV(programmes) {
