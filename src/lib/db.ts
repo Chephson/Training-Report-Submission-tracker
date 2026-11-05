@@ -25,6 +25,18 @@ const SCHEMA = [
      FOREIGN KEY (period_id) REFERENCES periods(id) ON DELETE CASCADE)`,
   `CREATE INDEX IF NOT EXISTS idx_submissions_period ON submissions(period_id)`,
   `CREATE INDEX IF NOT EXISTS idx_submissions_staff ON submissions(staff_id)`,
+  `CREATE TABLE IF NOT EXISTS programmes (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+     description TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS programme_assignments (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, programme_id INTEGER NOT NULL,
+     staff_id INTEGER NOT NULL, period_id INTEGER NOT NULL,
+     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+     UNIQUE(programme_id, staff_id, period_id),
+     FOREIGN KEY(programme_id) REFERENCES programmes(id),
+     FOREIGN KEY(staff_id) REFERENCES staff(id),
+     FOREIGN KEY(period_id) REFERENCES periods(id))`,
+  `CREATE INDEX IF NOT EXISTS idx_programme_assignments_period ON programme_assignments(period_id, programme_id)`,
   `CREATE TABLE IF NOT EXISTS unmatched (
      id INTEGER PRIMARY KEY AUTOINCREMENT, period_id INTEGER, email TEXT, full_name TEXT,
      submitted_at TEXT, reason TEXT, payload TEXT, source TEXT,
