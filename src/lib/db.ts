@@ -1,0 +1,114 @@
+import type { D1Database } from '@cloudflare/workers-types'
+
+export type Env = { DB: D1Database }
+
+const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS settings (
+     key TEXT PRIMARY KEY, value TEXT NOT NULL,
+     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS periods (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, form_url TEXT,
+     due_date TEXT, status TEXT NOT NULL DEFAULT 'open', webhook_token TEXT NOT NULL DEFAULT '',
+     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS staff (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, full_name TEXT NOT NULL,
+     email TEXT NOT NULL UNIQUE COLLATE NOCASE, team TEXT, role TEXT,
+     active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS submissions (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, period_id INTEGER NOT NULL,
+     source TEXT NOT NULL DEFAULT 'form', form_response_id TEXT, matched_by TEXT,
+     submitted_email TEXT, submitted_at TEXT NOT NULL, notes TEXT, raw_json TEXT,
+     training_programme TEXT NOT NULL DEFAULT 'Unspecified training programme',
+     training_start_date TEXT, duration_days REAL,
+     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+     FOREIGN KEY (staff_id) REFERENCES staff(id) ON DELETE CASCADE,
+     FOREIGN KEY (period_id) REFERENCES periods(id) ON DELETE CASCADE)`,
+  `CREATE INDEX IF NOT EXISTS idx_submissions_period ON submissions(period_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_submissions_staff ON submissions(staff_id)`,
+  `CREATE TABLE IF NOT EXISTS unmatched (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, period_id INTEGER, email TEXT, full_name TEXT,
+     submitted_at TEXT, reason TEXT, payload TEXT, source TEXT,
+     resolved INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS activity (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+     event TEXT NOT NULL, detail TEXT, actor TEXT)`,
+  `CREATE INDEX IF NOT EXISTS idx_activity_ts ON activity(ts DESC)`,
+]
+
+let ready: Promise<void> | null = null
+
+/** Create tables if missing (idempotent, memoised per isolate). */
+export function ensureSchema(db: D1Database): Promise<void> {
+  if (ready) return ready
+  ready = (async () => {
+    for (const stmt of SCHEMA) await db.prepare(stmt).run()
+    // Upgrade existing installations without losing historical submissions.
+    const cols = await db.prepare('PRAGMA table_info(submissions)').all<{ name: string }>()
+    if (!(cols.results ?? []).some((c) => c.name === 'training_programme')) {
+      await db.prepare("ALTER TABLE submissions ADD COLUMN training_programme TEXT NOT NULL DEFAULT 'Unspecified training programme'").run()
+      await db.prepare("UPDATE submissions SET training_programme = COALESCE((SELECT name FROM periods WHERE periods.id = submissions.period_id), 'Unspecified training programme')").run()
+    }
+    const refreshedCols = await db.prepare('PRAGMA table_info(submissions)').all<{ name: string }>()
+    if (!(refreshedCols.results ?? []).some((c) => c.name === 'training_start_date')) await db.prepare('ALTER TABLE submissions ADD COLUMN training_start_date TEXT').run()
+    if (!(refreshedCols.results ?? []).some((c) => c.name === 'duration_days')) await db.prepare('ALTER TABLE submissions ADD COLUMN duration_days REAL').run()
+    const sql = await db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='submissions'").first<{ sql: string }>()
+    if (sql?.sql?.includes('UNIQUE (period_id, staff_id)')) {
+      await db.prepare(`CREATE TABLE submissions_v2 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, period_id INTEGER NOT NULL,
+        source TEXT NOT NULL DEFAULT 'form', form_response_id TEXT, matched_by TEXT, submitted_email TEXT,
+        submitted_at TEXT NOT NULL, notes TEXT, raw_json TEXT, training_programme TEXT NOT NULL DEFAULT 'Unspecified training programme',
+        training_start_date TEXT, duration_days REAL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (staff_id) REFERENCES staff(id) ON DELETE CASCADE,
+        FOREIGN KEY (period_id) REFERENCES periods(id) ON DELETE CASCADE)`).run()
+      await db.prepare(`INSERT INTO submissions_v2 (id,staff_id,period_id,source,form_response_id,matched_by,submitted_email,submitted_at,notes,raw_json,training_programme,training_start_date,duration_days,created_at)
+        SELECT id,staff_id,period_id,source,form_response_id,matched_by,submitted_email,submitted_at,notes,raw_json,training_programme,training_start_date,duration_days,created_at FROM submissions`).run()
+      await db.prepare('DROP TABLE submissions').run()
+      await db.prepare('ALTER TABLE submissions_v2 RENAME TO submissions').run()
+    }
+    await db.prepare('CREATE INDEX IF NOT EXISTS idx_submissions_period ON submissions(period_id)').run()
+    await db.prepare('CREATE INDEX IF NOT EXISTS idx_submissions_staff ON submissions(staff_id)').run()
+    await db.prepare('CREATE INDEX IF NOT EXISTS idx_submissions_period_staff_programme ON submissions(period_id, staff_id, training_programme)').run()
+  })().catch((e) => {
+    ready = null
+    throw e
+  })
+  return ready
+}
+
+export function newToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(12))
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+export async function log(db: D1Database, event: string, detail = '', actor = 'system') {
+  await db
+    .prepare('INSERT INTO activity (event, detail, actor, ts) VALUES (?, ?, ?, ?)')
+    .bind(event, detail, actor, new Date().toISOString())
+    .run()
+}
+
+export async function getSetting(db: D1Database, key: string, fallback = ''): Promise<string> {
+  const r = await db.prepare('SELECT value FROM settings WHERE key = ?').bind(key).first<{ value: string }>()
+  return r?.value ?? fallback
+}
+
+export async function setSetting(db: D1Database, key: string, value: string) {
+  await db
+    .prepare(
+      `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    )
+    .bind(key, value, new Date().toISOString())
+    .run()
+}
+
+/** A brand-new install gets one open period so the tracker is usable immediately. */
+export async function ensureDefaultPeriod(db: D1Database): Promise<void> {
+  const row = await db.prepare('SELECT COUNT(*) AS n FROM periods').first<{ n: number }>()
+  if ((row?.n ?? 0) > 0) return
+  const year = new Date().getFullYear()
+  await db
+    .prepare('INSERT INTO periods (name, status, webhook_token) VALUES (?, ?, ?)')
+    .bind(`Training Reports ${year}`, 'open', newToken())
+    .run()
+}
