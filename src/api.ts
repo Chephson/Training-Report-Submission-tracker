@@ -620,6 +620,27 @@ api.get('/hcot/mapping-exceptions', async c => {
   }))})
 })
 
+/* Validate a proposed identity link without creating or changing records.
+   Fail closed when the shared access gate is not configured. */
+api.post('/hcot/mapping-validate', async c => {
+  if (!(await getSetting(c.env.DB,'access_code'))) return c.json({error:'Access control must be configured before mapping review.'},403)
+  const body=await c.req.json<{hcot_staff_number?:string;tracker_staff_id?:number}>().catch(()=>({}))
+  const number=typeof body.hcot_staff_number==='string'?body.hcot_staff_number.trim():''
+  const staffId=Number(body.tracker_staff_id)
+  if(!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$/.test(number)||!Number.isSafeInteger(staffId)||staffId<=0)
+    return c.json({error:'Provide a valid HCOT staff number and positive tracker staff ID.'},400)
+  const staff=await c.env.DB.prepare('SELECT id,active FROM staff WHERE id=?').bind(staffId).first<{id:number;active:number}>()
+  const byNumber=await c.env.DB.prepare('SELECT tracker_staff_id FROM hcot_staff_links WHERE hcot_staff_number=?').bind(number).first<{tracker_staff_id:number}>()
+  const byStaff=await c.env.DB.prepare('SELECT hcot_staff_number FROM hcot_staff_links WHERE tracker_staff_id=?').bind(staffId).first<{hcot_staff_number:string}>()
+  const issues:string[]=[]
+  if(!staff)issues.push('staff_not_found')
+  else if(Number(staff.active)!==1)issues.push('staff_inactive')
+  if(byNumber&&byNumber.tracker_staff_id!==staffId)issues.push('staff_number_already_linked')
+  if(byStaff&&byStaff.hcot_staff_number!==number)issues.push('tracker_staff_already_linked')
+  return c.json({read_only:true,eligible_for_review:issues.length===0,already_linked:byNumber?.tracker_staff_id===staffId,
+    issues,approval_required:true,link_created:false})
+})
+
 api.get('/hcot/handshake-preview', async c => {
   const periodId=Number(c.req.query('period')) || (await defaultPeriod(c.env.DB))?.id || 0
   if(!Number.isInteger(periodId)||periodId<=0)return c.json({error:'Select a valid reporting period.'},400)
