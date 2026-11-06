@@ -27,5 +27,7 @@ jobs:
         run: node --check public/static/app.js
       - name: Multiple-submission regression tests
         run: node --experimental-strip-types --test tests/multiple-submissions.test.mjs
+      - name: Microsoft Forms ingestion regression tests
+        run: node --experimental-strip-types --test tests/forms-ingestion.test.mjs
       - name: HCOT handshake regression tests
         run: node --experimental-strip-types --test tests/hcot-handshake.test.mjs
