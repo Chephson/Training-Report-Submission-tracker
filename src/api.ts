@@ -651,37 +651,7 @@ api.get('/hcot/mapping-approval-status', async c => {
 })
 
 api.post('/hcot/mapping-approve', async c => {
-  if(c.env.HCOT_MAPPING_WRITES_ENABLED!=='true')return c.json({error:'Staff mapping writes are disabled pending security approval.'},403)
-  return c.json({error:'Named maker/checker authentication is not yet implemented; approval is unavailable.'},403)
-  const secret=c.env.HCOT_ADMIN_TOKEN
-  const supplied=c.req.header('x-hcot-admin-token')||''
-  if(!secret||secret.length<24||!supplied)return c.json({error:'HCOT administrator approval is not configured.'},403)
-  if((await sha('hcot:'+supplied))!==(await sha('hcot:'+secret)))
-    return c.json({error:'Administrator authorization failed.'},403)
-  const body=await c.req.json<{hcot_staff_number?:string;tracker_staff_id?:number;identity_verified?:boolean;approval_note?:string}>().catch(()=>({}))
-  const number=typeof body.hcot_staff_number==='string'?body.hcot_staff_number.trim():''
-  const staffId=Number(body.tracker_staff_id)
-  const note=typeof body.approval_note==='string'?body.approval_note.trim():''
-  if(!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$/.test(number)||!Number.isSafeInteger(staffId)||staffId<=0||
-    body.identity_verified!==true||note.length<12||note.length>500)
-    return c.json({error:'Valid IDs, identity verification and an approval note (12–500 characters) are required.'},400)
-  const staff=await c.env.DB.prepare('SELECT active FROM staff WHERE id=?').bind(staffId).first<{active:number}>()
-  if(!staff||Number(staff.active)!==1)return c.json({error:'Employee is missing or inactive.'},409)
-  const existingNumber=await c.env.DB.prepare('SELECT tracker_staff_id FROM hcot_staff_links WHERE hcot_staff_number=?').bind(number).first<{tracker_staff_id:number}>()
-  const existingStaff=await c.env.DB.prepare('SELECT hcot_staff_number FROM hcot_staff_links WHERE tracker_staff_id=?').bind(staffId).first<{hcot_staff_number:string}>()
-  if(existingNumber||existingStaff)return c.json({error:'A mapping already exists; no changes made.'},409)
-  const eventDetail=JSON.stringify({hcot_staff_number:number,tracker_staff_id:staffId,note})
-  try {
-    const results=await c.env.DB.batch([
-      c.env.DB.prepare('INSERT INTO hcot_staff_links (hcot_staff_number,tracker_staff_id) VALUES (?,?)').bind(number,staffId),
-      c.env.DB.prepare('INSERT INTO activity (event,detail,actor) VALUES (?,?,?)').bind('hcot.mapping.approved',eventDetail,'hcot_admin')
-    ])
-    if(results[0].meta.changes!==1||results[1].meta.changes!==1)
-      return c.json({error:'Mapping could not be confirmed; investigate before retrying.'},500)
-  }catch{
-    return c.json({error:'Mapping conflict or audit failure; no mapping approved.'},409)
-  }
-  return c.json({ok:true,link_created:true,automatic_sync_enabled:false},201)
+  return c.json({error:'Approval unavailable: named maker/checker authentication and independent review are required.'},403)
 })
 
 api.get('/hcot/handshake-preview', async c => {
