@@ -643,6 +643,13 @@ api.post('/hcot/mapping-validate', async c => {
 
 /* Explicitly approved identity links require a separate server-side administrator token.
    Never use the general tracker access code for this privileged operation. */
+api.get('/hcot/mapping-approval-status', async c => {
+  const rows=await c.env.DB.prepare("SELECT status,COUNT(*) AS total FROM hcot_mapping_requests GROUP BY status").all<{status:string;total:number}>()
+  const counts={pending:0,approved:0,rejected:0}
+  for(const r of rows.results||[])if(r.status in counts)counts[r.status as keyof typeof counts]=Number(r.total)||0
+  return c.json({read_only:true,approval_enabled:false,named_authentication:false,maker_checker_enabled:false,counts})
+})
+
 api.post('/hcot/mapping-approve', async c => {
   if(c.env.HCOT_MAPPING_WRITES_ENABLED!=='true')return c.json({error:'Staff mapping writes are disabled pending security approval.'},403)
   return c.json({error:'Named maker/checker authentication is not yet implemented; approval is unavailable.'},403)
