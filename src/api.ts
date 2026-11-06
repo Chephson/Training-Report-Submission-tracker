@@ -69,6 +69,14 @@ api.use('/*', async (c, next) => {
   const path = c.req.path.replace('/api', '')
   if (PUBLIC_PATHS.some((p) => path.startsWith(p))) return next()
 
+  if (path === '/hcot' || path.startsWith('/hcot/')) {
+    if (!c.env.HCOT_ACCESS_TEAM_DOMAIN || !c.env.HCOT_ACCESS_AUD) {
+      return c.json({ error: 'HCOT Access verification not configured.' }, 503)
+    }
+    const identity = await verifyAccessJwt(c.req.raw, c.env)
+    if (!identity) return c.json({ error: 'Cloudflare Access authentication required.' }, 401)
+  }
+
   const code = await getSetting(c.env.DB, 'access_code')
   if (!code) {
     if (path.startsWith('/hcot/')) return c.json({ error: 'HCOT access is disabled until the tracker access code is configured.' }, 403)
