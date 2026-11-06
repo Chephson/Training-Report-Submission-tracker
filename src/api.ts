@@ -386,12 +386,12 @@ api.get('/overview', async (c) => {
 api.get('/programmes', async (c) => {
   const periodId = Number(c.req.query('period')) || (await defaultPeriod(c.env.DB))?.id || 0
   const rows = await c.env.DB.prepare(`SELECT p.*,
-    (SELECT COUNT(*) FROM programme_assignments a WHERE a.programme_id=p.id AND a.period_id=?) AS assigned,
-    (SELECT COUNT(*) FROM programme_assignments a WHERE a.programme_id=p.id AND a.period_id=?
+    (SELECT COUNT(DISTINCT a.staff_id) FROM programme_assignments a WHERE a.programme_id=p.id AND a.period_id=?) AS assigned,
+    (SELECT COUNT(DISTINCT a.staff_id) FROM programme_assignments a WHERE a.programme_id=p.id AND a.period_id=?
       AND EXISTS (SELECT 1 FROM submissions s WHERE s.staff_id=a.staff_id AND s.period_id=a.period_id
       AND LOWER(TRIM(s.training_programme))=LOWER(TRIM(p.name)))) AS submitted
     FROM programmes p ORDER BY p.name COLLATE NOCASE`).bind(periodId,periodId).all()
-  return c.json({ programmes: (rows.results || []).map((p: any) => ({ ...p, pending: p.assigned-p.submitted })) })
+  return c.json({ programmes: (rows.results || []).map((p: any) => ({ ...p, pending: Math.max(0, p.assigned-p.submitted) })) })
 })
 
 api.post('/programmes', async (c) => {
