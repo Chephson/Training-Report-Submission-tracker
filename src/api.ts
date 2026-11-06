@@ -645,6 +645,7 @@ api.post('/hcot/mapping-validate', async c => {
    Never use the general tracker access code for this privileged operation. */
 api.post('/hcot/mapping-approve', async c => {
   if(c.env.HCOT_MAPPING_WRITES_ENABLED!=='true')return c.json({error:'Staff mapping writes are disabled pending security approval.'},403)
+  return c.json({error:'Named maker/checker authentication is not yet implemented; approval is unavailable.'},403)
   const secret=c.env.HCOT_ADMIN_TOKEN
   const supplied=c.req.header('x-hcot-admin-token')||''
   if(!secret||secret.length<24||!supplied)return c.json({error:'HCOT administrator approval is not configured.'},403)
