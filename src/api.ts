@@ -577,6 +577,37 @@ api.get('/hcot/reviews', async c => {
 })
 /* Reviews remain read-only until verified supervisor identity and permissions are implemented. */
 
+/* Read-only handshake: compare HCOT draft plans with tracker programmes and
+   participant assignments. No records are modified by this endpoint. */
+api.get('/hcot/handshake-preview', async c => {
+  const periodId=Number(c.req.query('period')) || (await defaultPeriod(c.env.DB))?.id || 0
+  if(!Number.isInteger(periodId)||periodId<=0)return c.json({error:'Select a valid reporting period.'},400)
+  const period=await c.env.DB.prepare('SELECT id,name FROM periods WHERE id=?').bind(periodId).first()
+  if(!period)return c.json({error:'Reporting period not found.'},404)
+  const plans=await c.env.DB.prepare('SELECT id,title,status FROM hcot_training_plans ORDER BY id DESC').all<{id:number;title:string;status:string}>()
+  const programmes=await c.env.DB.prepare('SELECT id,name FROM programmes').all<{id:number;name:string}>()
+  const assignments=await c.env.DB.prepare('SELECT programme_id,staff_id FROM programme_assignments WHERE period_id=?').bind(periodId).all<{programme_id:number;staff_id:number}>()
+  const participants=await c.env.DB.prepare('SELECT plan_id,staff_id FROM hcot_participants').all<{plan_id:number;staff_id:number}>()
+  const normalized=(s:string)=>s.trim().replace(/\\s+/g,' ').toLocaleLowerCase()
+  const results=(plans.results||[]).map(plan=>{
+    const matches=(programmes.results||[]).filter(pr=>normalized(pr.name)===normalized(plan.title))
+    const participantIds=(participants.results||[]).filter(x=>x.plan_id===plan.id).map(x=>x.staff_id)
+    const matching=matches.length===1?matches[0]:null
+    const assigned=new Set((assignments.results||[]).filter(x=>x.programme_id===matching?.id).map(x=>x.staff_id))
+    const missing=participantIds.filter(id=>!assigned.has(id))
+    return {plan_id:plan.id,title:plan.title,status:plan.status,programme_id:matching?.id||null,
+      match_status:matches.length===0?'new_programme':matches.length===1?'matched':'ambiguous',
+      participants:participantIds.length,already_assigned:participantIds.length-missing.length,
+      would_assign:missing.length,staff_ids_to_assign:missing}
+  })
+  return c.json({period_id:periodId,plans:results,summary:{
+    plans:results.length,matched:results.filter(x=>x.match_status==='matched').length,
+    new_programmes:results.filter(x=>x.match_status==='new_programme').length,
+    ambiguous:results.filter(x=>x.match_status==='ambiguous').length,
+    assignments_to_add:results.reduce((n,x)=>n+x.would_assign,0)
+  }})
+})
+
 api.get('/hcot/cost-estimates', async c => {
   const rows=await c.env.DB.prepare(`SELECT ce.id,ce.plan_id,ce.staff_id,ce.currency,
     ce.allowance_amount,ce.transport_amount,ce.accommodation_amount,
