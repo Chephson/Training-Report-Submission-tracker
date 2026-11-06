@@ -37,6 +37,21 @@ const SCHEMA = [
      FOREIGN KEY(staff_id) REFERENCES staff(id),
      FOREIGN KEY(period_id) REFERENCES periods(id))`,
   `CREATE INDEX IF NOT EXISTS idx_programme_assignments_period ON programme_assignments(period_id, programme_id)`,
+  `CREATE TABLE IF NOT EXISTS hcot_training_plans (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, start_date TEXT,
+     end_date TEXT, location TEXT, provider TEXT, status TEXT NOT NULL DEFAULT 'draft',
+     notes TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS hcot_participants (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL, staff_id INTEGER NOT NULL,
+     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+     UNIQUE(plan_id,staff_id),
+     FOREIGN KEY(plan_id) REFERENCES hcot_training_plans(id) ON DELETE CASCADE,
+     FOREIGN KEY(staff_id) REFERENCES staff(id))`,
+  `CREATE TABLE IF NOT EXISTS hcot_staff_links (
+     hcot_staff_number TEXT PRIMARY KEY, tracker_staff_id INTEGER NOT NULL UNIQUE,
+     verified_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+     FOREIGN KEY(tracker_staff_id) REFERENCES staff(id))`,
   `CREATE TABLE IF NOT EXISTS unmatched (
      id INTEGER PRIMARY KEY AUTOINCREMENT, period_id INTEGER, email TEXT, full_name TEXT,
      submitted_at TEXT, reason TEXT, payload TEXT, source TEXT,
