@@ -560,7 +560,7 @@ api.post('/hcot/goals', async c => {
 })
 api.get('/hcot/calendar', async c => {
   const year=(c.req.query('year')||String(new Date().getUTCFullYear())).trim()
-  if(!/^\\d{4}$/.test(year))return c.json({error:'Invalid year.'},400)
+  if(!/^\d{4}$/.test(year))return c.json({error:'Invalid year.'},400)
   const rows=await c.env.DB.prepare(`SELECT p.*, (SELECT COUNT(*) FROM hcot_participants h WHERE h.plan_id=p.id) AS participants
     FROM hcot_training_plans p WHERE substr(p.start_date,1,4)=? ORDER BY p.start_date,p.title`).bind(year).all()
   return c.json({plans:rows.results||[],year})
@@ -588,7 +588,7 @@ api.get('/hcot/handshake-preview', async c => {
   const programmes=await c.env.DB.prepare('SELECT id,name FROM programmes').all<{id:number;name:string}>()
   const assignments=await c.env.DB.prepare('SELECT programme_id,staff_id FROM programme_assignments WHERE period_id=?').bind(periodId).all<{programme_id:number;staff_id:number}>()
   const participants=await c.env.DB.prepare('SELECT plan_id,staff_id FROM hcot_participants').all<{plan_id:number;staff_id:number}>()
-  const normalized=(s:string)=>s.trim().replace(/\\s+/g,' ').toLocaleLowerCase()
+  const normalized=(s:string)=>s.trim().replace(/\s+/g,' ').toLocaleLowerCase()
   const results=(plans.results||[]).map(plan=>{
     const matches=(programmes.results||[]).filter(pr=>normalized(pr.name)===normalized(plan.title))
     const participantIds=(participants.results||[]).filter(x=>x.plan_id===plan.id).map(x=>x.staff_id)
