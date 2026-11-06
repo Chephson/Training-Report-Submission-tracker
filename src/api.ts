@@ -506,6 +506,54 @@ api.delete('/programme-assignments/:id', async (c) => {
   return c.json({ok:true})
 })
 
+/* Per-staff outstanding reports across all assigned programmes in one period.
+   Read-only; distinct programme assignments prevent duplicate rows inflating totals. */
+api.get('/outstanding-programme-reports', async (c) => {
+  const periodId = Number(c.req.query('period')) || (await defaultPeriod(c.env.DB))?.id || 0
+  if (!Number.isSafeInteger(periodId) || periodId <= 0) return c.json({error:'Select a valid reporting period.'},400)
+  const period = await c.env.DB.prepare('SELECT id,name FROM periods WHERE id=?').bind(periodId).first()
+  if (!period) return c.json({error:'Reporting period not found.'},404)
+  const result = await c.env.DB.prepare(`SELECT st.id AS staff_id,st.full_name,st.email,st.team,
+    p.id AS programme_id,p.name AS training_programme,
+    CASE WHEN EXISTS (
+      SELECT 1 FROM submissions s WHERE s.staff_id=a.staff_id AND s.period_id=a.period_id
+      AND LOWER(TRIM(s.training_programme))=LOWER(TRIM(p.name))
+    ) THEN 1 ELSE 0 END AS has_submitted
+    FROM (SELECT DISTINCT staff_id,programme_id,period_id FROM programme_assignments WHERE period_id=?) a
+    JOIN staff st ON st.id=a.staff_id JOIN programmes p ON p.id=a.programme_id
+    ORDER BY st.full_name COLLATE NOCASE,p.name COLLATE NOCASE`).bind(periodId).all<{
+      staff_id:number;full_name:string;email:string;team:string|null;
+      programme_id:number;training_programme:string;has_submitted:number
+    }>()
+  const byStaff = new Map<number,{
+    staff_id:number;full_name:string;email:string;team:string|null;
+    assigned:number;submitted:number;pending:number;
+    outstanding_programmes:{programme_id:number;training_programme:string}[]
+  }>()
+  for (const r of result.results || []) {
+    let item = byStaff.get(r.staff_id)
+    if (!item) {
+      item = {staff_id:r.staff_id,full_name:r.full_name,email:r.email,team:r.team,
+        assigned:0,submitted:0,pending:0,outstanding_programmes:[]}
+      byStaff.set(r.staff_id,item)
+    }
+    item.assigned++
+    if (r.has_submitted) item.submitted++
+    else {
+      item.pending++
+      item.outstanding_programmes.push({programme_id:r.programme_id,training_programme:r.training_programme})
+    }
+  }
+  const staff = [...byStaff.values()]
+  return c.json({read_only:true,period,summary:{
+    staff_assigned:staff.length,
+    staff_with_outstanding:staff.filter(s=>s.pending>0).length,
+    assigned_reports:staff.reduce((n,s)=>n+s.assigned,0),
+    submitted_reports:staff.reduce((n,s)=>n+s.submitted,0),
+    outstanding_reports:staff.reduce((n,s)=>n+s.pending,0)
+  },staff})
+})
+
 api.get('/programme-progress', async (c) => {
   const periodId = Number(c.req.query('period')) || (await defaultPeriod(c.env.DB))?.id || 0
   const programmeId = Number(c.req.query('programme_id')) || 0
