@@ -857,6 +857,17 @@ async function renderHCOTSection(section) {
     }else if(section==='identity'){
       const [d,m,x]=await Promise.all([api('/hcot/identity-audit'),api('/hcot/mapping-readiness'),api('/hcot/mapping-exceptions')])
       el.innerHTML='<div class="card"><div class="card-head"><h3>Staff identity integrity audit</h3></div><div class="card-body"><p>Read-only checks against the existing tracker staff roster. No records are synchronized or modified.</p><p><strong>'+d.verified_links+'</strong> verified staff links · <strong>'+d.participant_records+'</strong> HCOT participant records · <strong>'+d.inactive_participants+'</strong> inactive staff assignments · <strong>'+d.missing_staff+'</strong> missing staff references</p><p>Mapping readiness: '+m.summary.active_verified_links+' active verified links, '+m.summary.unlinked_participants+' unlinked participants, '+m.summary.orphan_links+' orphan links, '+m.summary.inactive_links+' inactive links. Automatic synchronization remains disabled.</p></div><div class="table-wrap"><table><thead><tr><th>Training plan</th><th>Participants</th><th>Unverified links</th><th>Missing staff</th><th>Inactive staff</th></tr></thead><tbody>'+(x.plans||[]).map(p=>'<tr><td>'+esc(p.training_title)+'</td><td>'+p.participants+'</td><td>'+p.unverified+'</td><td>'+p.missing+'</td><td>'+p.inactive+'</td></tr>').join('')+((x.plans||[]).length?'':'<tr><td colspan="5">No HCOT training plans yet.</td></tr>')+'</tbody></table></div></div>'
+      el.insertAdjacentHTML('beforeend','<div class="card mt-16"><div class="card-head"><h3>Validate proposed staff mapping</h3></div><div class="card-body"><p>Review only. This does not create a link or change employee records.</p><label class="field"><span>HCOT staff number</span><input id="hcot-map-number" maxlength="64"></label><label class="field"><span>Tracker staff ID</span><input id="hcot-map-staff" type="number" min="1" step="1"></label><button class="btn" id="hcot-map-check">Check mapping</button><p id="hcot-map-result" role="status"></p></div></div>')
+      $('#hcot-map-check').onclick=async()=>{
+        const output=$('#hcot-map-result')
+        output.textContent='Checking mapping…'
+        try {
+          const r=await api('/hcot/mapping-validate',{method:'POST',body:JSON.stringify({
+            hcot_staff_number:$('#hcot-map-number').value,tracker_staff_id:Number($('#hcot-map-staff').value)
+          })})
+          output.textContent=r.issues.length?'Review required: '+r.issues.join(', '):r.already_linked?'Existing verified link found.':'No collisions found. Independent approval is still required.'
+        }catch(e){output.textContent='Validation unavailable: '+e.message}
+      }
     }else if(section==='handshake'){
       const period=Number(state.periodId)
       const data=await api('/hcot/handshake-preview?period='+period)
