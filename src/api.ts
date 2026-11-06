@@ -648,6 +648,15 @@ api.post('/hcot/mapping-validate', async c => {
    Never use the general tracker access code for this privileged operation. */
 /* Security policy preview: no user-supplied identity can authorize a review.
    The actual write endpoints stay disabled until a trusted identity provider is integrated. */
+/* Preview maker/checker eligibility without trusting a browser-provided role.
+   This endpoint never authorizes or performs a mapping write. */
+api.get('/hcot/mapping-requests', async c => {
+  const rows=await c.env.DB.prepare(
+    "SELECT id,status,created_at,reviewed_at FROM hcot_mapping_requests ORDER BY id DESC LIMIT 100"
+  ).all()
+  return c.json({read_only:true,requests:rows.results||[],approvals_enabled:false})
+})
+
 api.get('/hcot/mapping-security', async c => {
   return c.json({
     approval_enabled:false,
