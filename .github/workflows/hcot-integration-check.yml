@@ -25,3 +25,5 @@ jobs:
         run: npm run build
       - name: Check browser JavaScript syntax
         run: node --check public/static/app.js
+      - name: HCOT handshake regression tests
+        run: node --experimental-strip-types --test tests/hcot-handshake.test.mjs
