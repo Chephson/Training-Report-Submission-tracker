@@ -602,6 +602,24 @@ api.get('/hcot/mapping-readiness', async c => {
     reasons:['Staff identity links require independent verification','Role-based authorization and approval controls are not implemented']})
 })
 
+/* Plan-level identity exceptions; read-only, no employee names or emails. */
+api.get('/hcot/mapping-exceptions', async c => {
+  const rows=await c.env.DB.prepare(`SELECT p.id AS plan_id,p.title AS training_title,
+    COUNT(hp.staff_id) AS participants,
+    SUM(CASE WHEN hp.staff_id IS NOT NULL AND l.tracker_staff_id IS NULL THEN 1 ELSE 0 END) AS unverified,
+    SUM(CASE WHEN hp.staff_id IS NOT NULL AND s.id IS NULL THEN 1 ELSE 0 END) AS missing,
+    SUM(CASE WHEN hp.staff_id IS NOT NULL AND s.active=0 THEN 1 ELSE 0 END) AS inactive
+    FROM hcot_training_plans p
+    LEFT JOIN hcot_participants hp ON hp.plan_id=p.id
+    LEFT JOIN staff s ON s.id=hp.staff_id
+    LEFT JOIN hcot_staff_links l ON l.tracker_staff_id=hp.staff_id
+    GROUP BY p.id,p.title ORDER BY p.id DESC`).all()
+  return c.json({read_only:true,plans:(rows.results||[]).map(r=>({
+    plan_id:r.plan_id,training_title:r.training_title,participants:Number(r.participants)||0,
+    unverified:Number(r.unverified)||0,missing:Number(r.missing)||0,inactive:Number(r.inactive)||0
+  }))})
+})
+
 api.get('/hcot/handshake-preview', async c => {
   const periodId=Number(c.req.query('period')) || (await defaultPeriod(c.env.DB))?.id || 0
   if(!Number.isInteger(periodId)||periodId<=0)return c.json({error:'Select a valid reporting period.'},400)
