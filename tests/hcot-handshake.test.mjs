@@ -32,3 +32,16 @@ test('does not mutate caller data',()=>{
   assert.deepEqual(plans,[{id:1,title:'New course',status:'draft'}])
   assert.deepEqual(participants,[{plan_id:1,staff_id:5}])
 })
+
+test('blocks participants when no tracker programme matches',()=>{
+  const result=previewHandshake([{id:1,title:'New course',status:'draft'}],[],[{plan_id:1,staff_id:5}],[])
+  assert.equal(result.summary.assignments_to_add,0)
+  assert.equal(result.summary.blocked_participants,1)
+  assert.deepEqual(result.plans[0].staff_ids_to_assign,[])
+})
+
+test('blocks participants when tracker programme names are ambiguous',()=>{
+  const result=previewHandshake([{id:1,title:'Safety',status:'draft'}],[{id:2,name:'Safety'},{id:3,name:' safety '}],[{plan_id:1,staff_id:8}],[])
+  assert.equal(result.summary.assignments_to_add,0)
+  assert.equal(result.summary.blocked_participants,1)
+})
