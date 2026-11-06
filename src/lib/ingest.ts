@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types'
-import { log, newToken } from './db'
-import { namesMatch, normEmail, type IngestRecord } from './core'
+import { log, newToken } from './db.ts'
+import { namesMatch, normEmail, type IngestRecord } from './core.ts'
 
 export type Staff = {
   id: number
