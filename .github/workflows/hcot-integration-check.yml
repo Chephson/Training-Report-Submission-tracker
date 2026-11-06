@@ -1,0 +1,27 @@
+name: HCOT integration validation
+on:
+  push:
+    branches:
+      - feature/hcot-unified-integration
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build Cloudflare application
+        run: npm run build
+      - name: Check browser JavaScript syntax
+        run: node --check public/static/app.js
