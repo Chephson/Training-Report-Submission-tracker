@@ -9,8 +9,13 @@ Status: **Stage 1 scaffold; not production-ready**.
 - Existing tracker staff roster is used for draft participant selection; no confidential HCOT archive data is committed.
 - Existing Forms ingestion, submissions, assignments, and dashboard remain unchanged.
 
+## Stage 2 additions
+- HCOT training calendar, competency catalogue, draft development goals and KPI descriptors.
+- Read-only supervisor review register (writing reviews remains blocked pending verified supervisor permissions).
+- New HCOT records are empty by default and are not populated from the confidential archive.
+
 ## Not yet implemented — do not merge into production
-- Full migration of HCOT's 300 KB Preact application and its screens.
+- Full migration of HCOT's 300 KB Preact application and its remaining screens, including costing, workflows and analytics.
 - Secure authentication, user roles, approval segregation and audit authorization.
 - Identity reconciliation against the confidential HCOT staff register.
 - Programme publishing and bidirectional synchronization with report assignments.
