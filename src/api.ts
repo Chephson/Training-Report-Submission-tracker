@@ -32,7 +32,7 @@ import {
 import { seedDemo } from './lib/seed'
 import { previewHandshake } from './lib/hcot-handshake'
 
-export type Env = { DB: D1Database; HCOT_ADMIN_TOKEN?: string; HCOT_MAPPING_WRITES_ENABLED?: string }
+export type Env = { DB: D1Database }
 const api = new Hono<{ Bindings: Env }>()
 
 api.use('/*', cors({ origin: '*', allowHeaders: ['Content-Type', 'X-Access-Code'] }))
@@ -643,6 +643,19 @@ api.post('/hcot/mapping-validate', async c => {
 
 /* Explicitly approved identity links require a separate server-side administrator token.
    Never use the general tracker access code for this privileged operation. */
+/* Security policy preview: no user-supplied identity can authorize a review.
+   The actual write endpoints stay disabled until a trusted identity provider is integrated. */
+api.get('/hcot/mapping-security', async c => {
+  return c.json({
+    approval_enabled:false,
+    request_submission_enabled:false,
+    identity_provider_configured:false,
+    independent_checker_required:true,
+    automatic_sync_enabled:false,
+    reason:'Named identity and reviewer role must be verified server-side before approval writes.'
+  })
+})
+
 api.get('/hcot/mapping-approval-status', async c => {
   const rows=await c.env.DB.prepare("SELECT status,COUNT(*) AS total FROM hcot_mapping_requests GROUP BY status").all<{status:string;total:number}>()
   const counts={pending:0,approved:0,rejected:0}
