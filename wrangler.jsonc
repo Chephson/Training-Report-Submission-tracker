@@ -7,15 +7,6 @@
     "nodejs_compat"
   ],
   "env": {
-    "production": {
-      "d1_databases": [
-        {
-          "binding": "DB",
-          "database_name": "report-tracker",
-          "database_id": "b8e12cd1-56e0-4460-a570-15b58fc4219c"
-        }
-      ]
-    },
     "preview": {
       "d1_databases": [
         {
@@ -25,5 +16,12 @@
         }
       ]
     }
-  }
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "report-tracker",
+      "database_id": "b8e12cd1-56e0-4460-a570-15b58fc4219c"
+    }
+  ]
 }
