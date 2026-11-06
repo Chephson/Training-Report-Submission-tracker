@@ -830,14 +830,48 @@ async function renderProgrammes(el) {
   document.querySelectorAll('.pg-view').forEach(b=>b.onclick=async()=>{const data=await api('/programme-progress?period='+period+'&programme_id='+b.dataset.id);$('#pg-detail').innerHTML='<div class="card"><div class="card-head"><h3>Assigned staff: '+data.assigned+' · Submitted: '+data.submitted+' · Outstanding: '+data.pending+'</h3></div><div class="table-wrap"><table><thead><tr><th>Staff</th><th>Email</th><th>Status</th><th></th></tr></thead><tbody>'+data.rows.map(x=>'<tr><td>'+esc(x.full_name)+'</td><td>'+esc(x.email)+'</td><td>'+(x.submitted_at?'Submitted':'Outstanding')+'</td><td><button class="btn btn-sm pg-remove" data-id="'+x.id+'">Unassign</button></td></tr>').join('')+'</tbody></table></div></div>';document.querySelectorAll('.pg-remove').forEach(x=>x.onclick=async()=>{if(!confirm('Remove assignment? Existing submissions will be kept.'))return;await api('/programme-assignments/'+x.dataset.id,{method:'DELETE'});renderProgrammes(el)})})
 }
 
+/* HCOT phase 2: modular screens reuse existing cards, tables and form styles. */
+async function renderHCOTSection(section) {
+  const el=$('#hcot-extra')
+  if(!el)return
+  el.innerHTML='<div class="card"><div class="card-body">Loading HCOT records…</div></div>'
+  try {
+    if(section==='calendar'){
+      const year=new Date().getFullYear()
+      const data=await api('/hcot/calendar?year='+year)
+      el.innerHTML='<div class="card"><div class="card-head"><h3>Training calendar — '+year+'</h3></div><div class="table-wrap"><table><thead><tr><th>Training</th><th>Dates</th><th>Location</th><th>Participants</th></tr></thead><tbody>'+
+        (data.plans||[]).map(x=>'<tr><td>'+esc(x.title)+'</td><td>'+esc(x.start_date||'—')+' – '+esc(x.end_date||'—')+'</td><td>'+esc(x.location||'—')+'</td><td>'+x.participants+'</td></tr>').join('')+
+        (data.plans.length?'':'<tr><td colspan="4">No training plans scheduled for this year.</td></tr>')+'</tbody></table></div></div>'
+    }else if(section==='competencies'){
+      const data=await api('/hcot/competencies')
+      el.innerHTML='<div class="card"><div class="card-head"><h3>Competency library</h3></div><div class="card-body"><label class="field"><span>Competency name</span><input id="hcot-comp-name"></label><label class="field"><span>Category</span><select id="hcot-comp-cat"><option value="core">Core</option><option value="functional">Functional</option></select></label><label class="field"><span>Division</span><input id="hcot-comp-div"></label><label class="field"><span>Unit</span><input id="hcot-comp-unit"></label><label class="field"><span>Description</span><textarea id="hcot-comp-desc"></textarea></label><button class="btn btn-primary" id="hcot-comp-add">Add competency</button></div><div class="table-wrap"><table><thead><tr><th>Competency</th><th>Category</th><th>Division / unit</th></tr></thead><tbody>'+
+        data.competencies.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+esc(x.category)+'</td><td>'+esc([x.division,x.unit].filter(Boolean).join(' / ')||'Organisation-wide')+'</td></tr>').join('')+
+        (data.competencies.length?'':'<tr><td colspan="3">No competencies entered.</td></tr>')+'</tbody></table></div></div>'
+      $('#hcot-comp-add').onclick=async()=>{try{await api('/hcot/competencies',{method:'POST',body:JSON.stringify({name:$('#hcot-comp-name').value,category:$('#hcot-comp-cat').value,division:$('#hcot-comp-div').value,unit:$('#hcot-comp-unit').value,description:$('#hcot-comp-desc').value})});toast('Competency added');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
+    }else if(section==='goals'){
+      const data=await api('/hcot/goals')
+      el.innerHTML='<div class="card"><div class="card-head"><h3>Development goals</h3></div><div class="card-body"><label class="field"><span>Goal title</span><input id="hcot-goal-title"></label><label class="field"><span>Scope</span><select id="hcot-goal-scope"><option value="unit">Unit</option><option value="individual">Individual</option></select></label><label class="field"><span>Owner / unit label</span><input id="hcot-goal-owner"></label><label class="field"><span>Target date</span><input type="date" id="hcot-goal-date"></label><label class="field"><span>Measure / KPI</span><input id="hcot-goal-measure"></label><label class="field"><span>Target value</span><input id="hcot-goal-value"></label><button class="btn btn-primary" id="hcot-goal-add">Add draft goal</button></div><div class="table-wrap"><table><thead><tr><th>Goal</th><th>Scope</th><th>Owner</th><th>Target</th></tr></thead><tbody>'+
+        data.goals.map(x=>'<tr><td>'+esc(x.title)+'</td><td>'+esc(x.scope)+'</td><td>'+esc(x.owner_label||'—')+'</td><td>'+esc(x.target_date||'—')+'</td></tr>').join('')+
+        (data.goals.length?'':'<tr><td colspan="4">No goals entered.</td></tr>')+'</tbody></table></div></div>'
+      $('#hcot-goal-add').onclick=async()=>{try{await api('/hcot/goals',{method:'POST',body:JSON.stringify({title:$('#hcot-goal-title').value,scope:$('#hcot-goal-scope').value,owner_label:$('#hcot-goal-owner').value,target_date:$('#hcot-goal-date').value,measure:$('#hcot-goal-measure').value,target_value:$('#hcot-goal-value').value})});toast('Draft goal added');renderHCOTSection('goals')}catch(e){toast(e.message,true)}}
+    }else if(section==='reviews'){
+      const data=await api('/hcot/plans')
+      el.innerHTML='<div class="card"><div class="card-head"><h3>Supervisor evaluations</h3></div><div class="card-body"><p class="muted">Read-only pending review register. Evaluation submission will be enabled after supervisor identity and permissions are verified.</p><label class="field"><span>Training plan</span><select id="hcot-review-plan"><option value="">Select a plan</option>'+data.plans.map(x=>'<option value="'+x.id+'">'+esc(x.title)+'</option>').join('')+'</select></label><div id="hcot-review-list"></div></div></div>'
+      $('#hcot-review-plan').onchange=async()=>{const id=Number($('#hcot-review-plan').value);if(!id)return;const result=await api('/hcot/reviews?plan_id='+id);$('#hcot-review-list').innerHTML='<div class="table-wrap"><table><thead><tr><th>Staff</th><th>Review status</th></tr></thead><tbody>'+result.reviews.map(x=>'<tr><td>'+esc(x.full_name)+'</td><td>'+esc(x.status||'Pending')+'</td></tr>').join('')+'</tbody></table></div>'}
+    }
+  }catch(e){el.innerHTML='<div class="notice notice-bad">'+esc(e.message)+'</div>'}
+}
+
 /* HCOT unified module: draft planning only until security and synchronization are validated. */
 async function renderHCOT(el) {
   const [data,roster]=await Promise.all([api('/hcot/plans'),api('/staff')])
   const plans=data.plans||[],staff=roster.staff||[]
-  el.innerHTML='<div class="card"><div class="card-head"><div><h3>HCOT Training Monitor — Training planning</h3><p>Unified workspace preview. Draft plans do not automatically create report assignments.</p></div></div><div class="card-body"><label class="field"><span>Training programme title</span><input id="hcot-title" placeholder="Enter training title"></label><div class="grid grid-2"><label class="field"><span>Start date</span><input id="hcot-start" type="date"></label><label class="field"><span>End date</span><input id="hcot-end" type="date"></label></div><label class="field"><span>Location</span><input id="hcot-location"></label><label class="field"><span>Provider</span><input id="hcot-provider"></label><button class="btn btn-primary" id="hcot-create">Create draft training plan</button></div></div>'+
+  el.innerHTML='<div class="card"><div class="card-body"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn hcot-tab" data-section="calendar">Calendar</button><button class="btn hcot-tab" data-section="competencies">Competencies</button><button class="btn hcot-tab" data-section="goals">Goals & KPIs</button><button class="btn hcot-tab" data-section="reviews">Evaluations</button></div></div></div><div id="hcot-extra" class="mt-16"></div><div class="card mt-16"><div class="card-head"><div><h3>HCOT Training Monitor — Training planning</h3><p>Unified workspace preview. Draft plans do not automatically create report assignments.</p></div></div><div class="card-body"><label class="field"><span>Training programme title</span><input id="hcot-title" placeholder="Enter training title"></label><div class="grid grid-2"><label class="field"><span>Start date</span><input id="hcot-start" type="date"></label><label class="field"><span>End date</span><input id="hcot-end" type="date"></label></div><label class="field"><span>Location</span><input id="hcot-location"></label><label class="field"><span>Provider</span><input id="hcot-provider"></label><button class="btn btn-primary" id="hcot-create">Create draft training plan</button></div></div>'+
   '<div class="card mt-16"><div class="card-head"><h3>HCOT draft training plans</h3></div><div class="table-wrap"><table><thead><tr><th>Training</th><th>Dates</th><th>Location</th><th>Participants</th><th></th></tr></thead><tbody>'+
   plans.map(p=>'<tr><td>'+esc(p.title)+'</td><td>'+esc(p.start_date||'—')+' – '+esc(p.end_date||'—')+'</td><td>'+esc(p.location||'—')+'</td><td>'+p.participant_count+'</td><td><button class="btn btn-sm hcot-manage" data-id="'+p.id+'">Manage participants</button></td></tr>').join('')+
   (plans.length?'':'<tr><td colspan="5">No draft training plans yet.</td></tr>')+'</tbody></table></div></div><div id="hcot-participants" class="mt-16"></div>'
+  $$('.hcot-tab').forEach(btn=>btn.onclick=()=>renderHCOTSection(btn.dataset.section))
+  renderHCOTSection('calendar')
   $('#hcot-create').onclick=async()=>{
     try {
       await api('/hcot/plans',{method:'POST',body:JSON.stringify({title:$('#hcot-title').value,start_date:$('#hcot-start').value,end_date:$('#hcot-end').value,location:$('#hcot-location').value,provider:$('#hcot-provider').value})})
