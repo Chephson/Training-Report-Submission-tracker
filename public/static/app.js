@@ -811,10 +811,8 @@ async function renderOutstandingReports(el) {
     '<button class="btn" id="out-export">Export filtered CSV</button>' +
     '<p id="out-count" aria-live="polite"></p><div class="table-wrap"><table><thead><tr><th>Employee</th><th>Team</th><th>Programme</th><th>Status</th></tr></thead><tbody id="out-rows"></tbody></table></div></div></div>'
   const allRows = staff.flatMap(s => {
-    const outstanding = new Set((s.outstanding_programmes||[]).map(p=>Number(p.programme_id)))
-    return programmes.filter(p => (s.outstanding_programmes||[]).some(x=>Number(x.programme_id)===Number(p.id)))
-      .map(p => ({name:s.full_name,email:s.email,team:s.team||'',programme:p.name,programme_id:Number(p.id),status:'Outstanding'}))
-      .concat([])
+    return (s.outstanding_programmes||[]).map(p => ({name:s.full_name,email:s.email,team:s.team||'',programme:p.training_programme,programme_id:Number(p.programme_id),status:'Outstanding'}))
+
   })
   // The summary API exposes only pending programme names; submitted rows are not
   // reconstructed from totals because that would misidentify individual reports.
@@ -835,9 +833,9 @@ async function renderOutstandingReports(el) {
   $('#out-export').onclick=()=>{
     const rows=[['Employee','Email','Team','Programme','Status'],...filtered().map(r=>[r.name,r.email,r.team,r.programme,r.status])]
     const csv=rows.map(row=>row.map(value=>{
-      const safe=String(value??'').replace(/^[\\s]*[=+@-]/,m=>"'"+m)
+      const safe=String(value??'').replace(/^\s*[=+@-]/,m=>"'"+m)
       return '"'+safe.replace(/"/g,'""')+'"'
-    }).join(',')).join('\\r\\n')
+    }).join(',')).join('\r\n')
     const blob=new Blob([csv],{type:'text/csv;charset=utf-8'})
     const url=URL.createObjectURL(blob)
     const a=document.createElement('a');a.href=url;a.download='outstanding-reports-period-'+period+'.csv';a.click()
