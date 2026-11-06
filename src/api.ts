@@ -33,7 +33,7 @@ import { seedDemo } from './lib/seed'
 import { previewHandshake } from './lib/hcot-handshake'
 import { verifyAccessJwt } from './lib/hcot-access'
 
-export type Env = { DB: D1Database }
+export type Env = { DB: D1Database; HCOT_ACCESS_TEAM_DOMAIN?: string; HCOT_ACCESS_AUD?: string }
 const api = new Hono<{ Bindings: Env }>()
 
 api.use('/*', cors({ origin: (origin, c) => { try { return new URL(origin).origin === new URL(c.req.url).origin ? origin : '' } catch { return '' } }, allowHeaders: ['Content-Type', 'X-Access-Code'] }))
