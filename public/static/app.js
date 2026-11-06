@@ -217,6 +217,7 @@ const ROUTES = {
   dashboard: { title: 'Dashboard', sub: 'Report submission progress by training programme', render: renderDashboard },
   tracker: { title: 'Submission tracker', sub: 'Filter outstanding and submitted reports by training programme', render: renderTracker },
   programmes: { title: 'Programme assignments', sub: 'Manage assignments and outstanding reports', render: renderProgrammes },
+  outstanding: { title: 'Outstanding reports', sub: 'Track incomplete training reports for each employee and programme', render: renderOutstandingReports },
   hcot: { title: 'HCOT Training Monitor', sub: 'Training planning workspace (integration preview)', render: renderHCOT },
   history: { title: 'Staff training history', sub: 'A consolidated record of training programmes reported by staff', render: renderTrainingHistory },
   inbox: { title: 'Unmatched responses', sub: 'Submissions we could not attribute to anyone on the roster', render: renderInbox },
@@ -789,6 +790,61 @@ async function renderInbox(el) {
   )
 }
 
+
+async function renderOutstandingReports(el) {
+  const period = Number(state.periodId)
+  const [report, catalogue] = await Promise.all([
+    api('/outstanding-programme-reports?period=' + period),
+    api('/programmes?period=' + period)
+  ])
+  const staff = report.staff || []
+  const programmes = catalogue.programmes || []
+  const summary = report.summary || {}
+  el.innerHTML = '<div class="card"><div class="card-head"><h3>Outstanding training reports</h3></div><div class="card-body">' +
+    '<p>Each assigned employee is counted once per programme. A staff member may have both submitted and outstanding reports.</p>' +
+    '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px">' +
+    [['Assigned reports',summary.assigned_reports],['Submitted reports',summary.submitted_reports],['Outstanding reports',summary.outstanding_reports],['Staff with outstanding reports',summary.staff_with_outstanding]]
+      .map(x=>'<div style="min-width:130px"><strong style="font-size:24px">'+Number(x[1]||0)+'</strong><div>'+esc(x[0])+'</div></div>').join('') + '</div>' +
+    '<label class="field"><span>Search employee or team</span><input type="search" id="out-search" placeholder="Name, email or team"></label>' +
+    '<label class="field"><span>Programme</span><select id="out-programme"><option value="">All programmes</option>'+programmes.map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select></label>' +
+    '<label class="field"><span>Submission status</span><select id="out-status"><option value="pending">Outstanding only</option><option value="all">All assignments</option><option value="submitted">Submitted only</option></select></label>' +
+    '<button class="btn" id="out-export">Export filtered CSV</button>' +
+    '<p id="out-count" aria-live="polite"></p><div class="table-wrap"><table><thead><tr><th>Employee</th><th>Team</th><th>Programme</th><th>Status</th></tr></thead><tbody id="out-rows"></tbody></table></div></div></div>'
+  const allRows = staff.flatMap(s => {
+    const outstanding = new Set((s.outstanding_programmes||[]).map(p=>Number(p.programme_id)))
+    return programmes.filter(p => (s.outstanding_programmes||[]).some(x=>Number(x.programme_id)===Number(p.id)))
+      .map(p => ({name:s.full_name,email:s.email,team:s.team||'',programme:p.name,programme_id:Number(p.id),status:'Outstanding'}))
+      .concat([])
+  })
+  // The summary API exposes only pending programme names; submitted rows are not
+  // reconstructed from totals because that would misidentify individual reports.
+  $('#out-status').value='pending'
+  $('#out-status').querySelector('option[value="all"]').disabled=true
+  $('#out-status').querySelector('option[value="submitted"]').disabled=true
+  const filtered = () => {
+    const q=$('#out-search').value.trim().toLowerCase(), programme=$('#out-programme').value
+    return allRows.filter(r=>(!q||[r.name,r.email,r.team].some(v=>String(v||'').toLowerCase().includes(q)))&&(!programme||r.programme_id===Number(programme)))
+  }
+  const draw = () => {
+    const rows=filtered()
+    $('#out-count').textContent=rows.length+' outstanding programme reports match the filters.'
+    $('#out-rows').innerHTML=rows.length?rows.map(r=>'<tr><td>'+esc(r.name)+'<div>'+esc(r.email)+'</div></td><td>'+esc(r.team)+'</td><td>'+esc(r.programme)+'</td><td>Outstanding</td></tr>').join(''):'<tr><td colspan="4">No outstanding reports match your filters.</td></tr>'
+  }
+  $('#out-search').addEventListener('input',draw)
+  $('#out-programme').addEventListener('change',draw)
+  $('#out-export').onclick=()=>{
+    const rows=[['Employee','Email','Team','Programme','Status'],...filtered().map(r=>[r.name,r.email,r.team,r.programme,r.status])]
+    const csv=rows.map(row=>row.map(value=>{
+      const safe=String(value??'').replace(/^[\\s]*[=+@-]/,m=>"'"+m)
+      return '"'+safe.replace(/"/g,'""')+'"'
+    }).join(',')).join('\\r\\n')
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8'})
+    const url=URL.createObjectURL(blob)
+    const a=document.createElement('a');a.href=url;a.download='outstanding-reports-period-'+period+'.csv';a.click()
+    setTimeout(()=>URL.revokeObjectURL(url),1000)
+  }
+  draw()
+}
 
 async function renderProgrammes(el) {
   const period=Number(state.periodId)
