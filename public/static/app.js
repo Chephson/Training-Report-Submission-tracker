@@ -890,12 +890,12 @@ async function renderHCOT(el) {
       toast('Draft training plan created');renderHCOT(el)
     }catch(e){toast(e.message,true)}
   }
-  $('.hcot-manage').forEach(btn=>btn.onclick=async()=>{
+  $$('.hcot-manage').forEach(btn=>btn.onclick=async()=>{
     const id=Number(btn.dataset.id),participants=await api('/hcot/plans/'+id+'/participants')
     const selected=new Set((participants.staff||[]).map(x=>x.id))
     $('#hcot-participants').innerHTML='<div class="card"><div class="card-head"><h3>Participants — '+esc(plans.find(p=>p.id===id)?.title||'')+'</h3></div><div class="card-body"><label class="field"><span>Search staff</span><input id="hcot-search" type="search" placeholder="Name or email"></label><div style="max-height:230px;overflow:auto">'+staff.map(x=>'<label class="hcot-staff-row" style="display:block;padding:5px"><input type="checkbox" class="hcot-staff" value="'+x.id+'" '+(selected.has(x.id)?'checked disabled':'')+'> '+esc(x.full_name)+' — '+esc(x.email)+'</label>').join('')+'</div><button class="btn btn-primary mt-12" id="hcot-add">Add selected participants</button></div></div>'
-    $('#hcot-search').oninput=e=>{const q=e.target.value.toLowerCase();$('.hcot-staff-row').forEach(row=>row.style.display=row.textContent.toLowerCase().includes(q)?'block':'none')}
-    $('#hcot-add').onclick=async()=>{try{const ids=$('.hcot-staff').filter(x=>x.checked&&!x.disabled).map(x=>Number(x.value));const r=await api('/hcot/plans/'+id+'/participants',{method:'POST',body:JSON.stringify({staff_ids:ids})});toast(r.added+' participants added');renderHCOT(el)}catch(e){toast(e.message,true)}}
+    $('#hcot-search').oninput=e=>{const q=e.target.value.toLowerCase();$$('.hcot-staff-row').forEach(row=>row.style.display=row.textContent.toLowerCase().includes(q)?'block':'none')}
+    $('#hcot-add').onclick=async()=>{try{const ids=$$('.hcot-staff').filter(x=>x.checked&&!x.disabled).map(x=>Number(x.value));const r=await api('/hcot/plans/'+id+'/participants',{method:'POST',body:JSON.stringify({staff_ids:ids})});toast(r.added+' participants added');renderHCOT(el)}catch(e){toast(e.message,true)}}
   })
 }
 
