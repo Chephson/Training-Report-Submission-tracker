@@ -974,6 +974,7 @@ async function runImport(
     name: override.name ?? detected.name,
     time: override.time ?? detected.time,
     id: override.id ?? detected.id,
+    programme: override.programme ?? detected.programme,
   }
 
   const report: ImportReport = {
