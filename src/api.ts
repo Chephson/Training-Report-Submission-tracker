@@ -50,10 +50,11 @@ api.use('/hcot/*', async (c, next) => {
     }, 503)
   }
   const assertion = c.req.header('cf-access-jwt-assertion')
-  if (!assertion) return c.json({
-    error: 'Cloudflare Access JWT assertion not received by the HCOT API.',
+  const hasAccessCookie = (c.req.header('cookie') || '').split(';').some(part => part.trim().startsWith('CF_Authorization='))
+  if (!assertion && !hasAccessCookie) return c.json({
+    error: 'Cloudflare Access JWT not received in assertion header or authorization cookie.',
     code: 'HCOT_ACCESS_ASSERTION_MISSING',
-    guidance: 'Check that the Access application protects the exact preview hostname and /api/hcot/* paths. Do not disable Access.',
+    guidance: 'Check that the Access application protects the exact preview hostname and /api/hcot/* paths, and that the browser sends the Access session cookie. Do not disable Access.',
   }, 401)
   const identity = await verifyAccessJwt(c.req.raw, c.env)
   if (!identity) return c.json({
