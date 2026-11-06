@@ -35,7 +35,7 @@ import { previewHandshake } from './lib/hcot-handshake'
 export type Env = { DB: D1Database }
 const api = new Hono<{ Bindings: Env }>()
 
-api.use('/*', cors({ origin: '*', allowHeaders: ['Content-Type', 'X-Access-Code'] }))
+api.use('/*', cors({ origin: (origin, c) => { try { return new URL(origin).origin === new URL(c.req.url).origin ? origin : '' } catch { return '' } }, allowHeaders: ['Content-Type', 'X-Access-Code'] }))
 
 /* ---------------- schema + defaults on every request ---------------- */
 api.use('/*', async (c, next) => {
@@ -69,7 +69,10 @@ api.use('/*', async (c, next) => {
   if (PUBLIC_PATHS.some((p) => path.startsWith(p))) return next()
 
   const code = await getSetting(c.env.DB, 'access_code')
-  if (!code) return next()
+  if (!code) {
+    if (path.startsWith('/hcot/')) return c.json({ error: 'HCOT access is disabled until the tracker access code is configured.' }, 403)
+    return next()
+  }
 
   const expected = await sha(`trk:${code}`)
   const header = c.req.header('x-access-code') || ''
