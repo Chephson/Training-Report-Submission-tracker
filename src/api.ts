@@ -487,6 +487,52 @@ api.get('/unassigned-submissions', async (c) => {
   return c.json({submissions:rows.results||[]})
 })
 
+/* HCOT planning module: intentionally isolated from production programme assignments.
+   Publishing/synchronization is deferred until identity and authorization review. */
+api.get('/hcot/plans', async c => {
+  const plans=await c.env.DB.prepare(`SELECT p.*, (SELECT COUNT(*) FROM hcot_participants hp WHERE hp.plan_id=p.id) AS participant_count
+    FROM hcot_training_plans p ORDER BY p.id DESC`).all()
+  return c.json({plans:plans.results||[]})
+})
+api.post('/hcot/plans', async c => {
+  const body=await c.req.json<{title?:string;start_date?:string;end_date?:string;location?:string;provider?:string;notes?:string}>().catch(()=>({}))
+  const title=body.title?.trim()
+  if(!title||title.length>250)return c.json({error:'Enter a training title (up to 250 characters).'},400)
+  const result=await c.env.DB.prepare(`INSERT INTO hcot_training_plans
+    (title,start_date,end_date,location,provider,notes) VALUES (?,?,?,?,?,?)`)
+    .bind(title,body.start_date||null,body.end_date||null,body.location?.trim()||null,body.provider?.trim()||null,body.notes?.trim()||null).run()
+  await log(c.env.DB,'hcot.plan.created',`Training plan #${result.meta.last_row_id}`,'admin')
+  return c.json({ok:true,id:result.meta.last_row_id},201)
+})
+api.patch('/hcot/plans/:id', async c => {
+  const id=Number(c.req.param('id'))
+  const b=await c.req.json<{title?:string;start_date?:string;end_date?:string;location?:string;provider?:string;notes?:string}>().catch(()=>({}))
+  if(!b.title?.trim())return c.json({error:'Training title is required.'},400)
+  const result=await c.env.DB.prepare(`UPDATE hcot_training_plans SET title=?,start_date=?,end_date=?,location=?,provider=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='draft'`)
+    .bind(b.title.trim(),b.start_date||null,b.end_date||null,b.location||null,b.provider||null,b.notes||null,id).run()
+  if(!result.meta.changes)return c.json({error:'Draft plan not found.'},404)
+  return c.json({ok:true})
+})
+api.get('/hcot/plans/:id/participants', async c => {
+  const rows=await c.env.DB.prepare(`SELECT st.id,st.full_name,st.email,st.team FROM hcot_participants hp JOIN staff st ON st.id=hp.staff_id WHERE hp.plan_id=? ORDER BY st.full_name COLLATE NOCASE`).bind(Number(c.req.param('id'))).all()
+  return c.json({staff:rows.results||[]})
+})
+api.post('/hcot/plans/:id/participants', async c => {
+  const id=Number(c.req.param('id'))
+  const plan=await c.env.DB.prepare("SELECT id FROM hcot_training_plans WHERE id=? AND status='draft'").bind(id).first()
+  if(!plan)return c.json({error:'Draft plan not found.'},404)
+  const b=await c.req.json<{staff_ids?:number[]}>().catch(()=>({}))
+  if(!Array.isArray(b.staff_ids)||b.staff_ids.length>500)return c.json({error:'Provide up to 500 staff IDs.'},400)
+  let added=0
+  for(const staffId of new Set(b.staff_ids.map(Number).filter(Number.isInteger))){
+    const staff=await c.env.DB.prepare('SELECT id FROM staff WHERE id=?').bind(staffId).first()
+    if(!staff)continue
+    const r=await c.env.DB.prepare('INSERT OR IGNORE INTO hcot_participants (plan_id,staff_id) VALUES (?,?)').bind(id,staffId).run()
+    added+=r.meta.changes||0
+  }
+  return c.json({ok:true,added})
+})
+
 /* ---------------- staff training history ---------------- */
 api.get('/training-history', async (c) => {
   const db = c.env.DB
