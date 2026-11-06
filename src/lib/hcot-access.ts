@@ -10,7 +10,11 @@ export async function verifyAccessJwt(request:Request,env:AccessConfig):Promise<
   const domain=env.HCOT_ACCESS_TEAM_DOMAIN?.trim().toLowerCase().replace(/^https?:\/\//,'').replace(/\/$/,'')
   const audience=env.HCOT_ACCESS_AUD?.trim()
   if(!domain||!audience||!/^[a-z0-9-]+\.cloudflareaccess\.com$/.test(domain))return null
-  const token=request.headers.get('cf-access-jwt-assertion')
+  // Cloudflare Access may deliver its signed JWT in the CF_Authorization cookie
+  // rather than forwarding Cf-Access-Jwt-Assertion to a Pages Function.
+  // Both transports undergo exactly the same signature and claim verification.
+  const cookieToken=request.headers.get('cookie')?.split(';').map(p=>p.trim()).find(p=>p.startsWith('CF_Authorization='))?.slice('CF_Authorization='.length)
+  const token=request.headers.get('cf-access-jwt-assertion') || cookieToken
   if(!token||token.length>12000)return null
   const parts=token.split('.')
   if(parts.length!==3)return null
