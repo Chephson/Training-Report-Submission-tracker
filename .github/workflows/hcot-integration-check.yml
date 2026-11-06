@@ -37,5 +37,7 @@ jobs:
         run: node --test tests/hcot-readonly-guards.test.mjs
       - name: Training history summary regression tests
         run: node --test tests/training-history-summary.test.mjs
+      - name: Programme reporting regression tests
+        run: node --test tests/programme-reporting.test.mjs
       - name: HCOT handshake regression tests
         run: node --experimental-strip-types --test tests/hcot-handshake.test.mjs
