@@ -580,6 +580,14 @@ api.get('/hcot/reviews', async c => {
 
 /* Read-only handshake: compare HCOT draft plans with tracker programmes and
    participant assignments. No records are modified by this endpoint. */
+api.get('/hcot/identity-audit', async c => {
+  const linked = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM hcot_staff_links').first<{n:number}>()
+  const participants = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM hcot_participants').first<{n:number}>()
+  const inactive = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM hcot_participants p JOIN staff s ON s.id=p.staff_id WHERE s.active=0').first<{n:number}>()
+  const missing = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM hcot_participants p LEFT JOIN staff s ON s.id=p.staff_id WHERE s.id IS NULL').first<{n:number}>()
+  return c.json({verified_links:linked?.n||0,participant_records:participants?.n||0,inactive_participants:inactive?.n||0,missing_staff:missing?.n||0,read_only:true})
+})
+
 api.get('/hcot/handshake-preview', async c => {
   const periodId=Number(c.req.query('period')) || (await defaultPeriod(c.env.DB))?.id || 0
   if(!Number.isInteger(periodId)||periodId<=0)return c.json({error:'Select a valid reporting period.'},400)
