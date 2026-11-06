@@ -53,6 +53,7 @@ const SCHEMA = [
      verified_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
      FOREIGN KEY(tracker_staff_id) REFERENCES staff(id))`,
   `CREATE TABLE IF NOT EXISTS hcot_mapping_requests (id INTEGER PRIMARY KEY AUTOINCREMENT, hcot_staff_number TEXT NOT NULL, tracker_staff_id INTEGER NOT NULL, requested_by TEXT NOT NULL, reason TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', reviewed_by TEXT, reviewed_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE INDEX IF NOT EXISTS idx_hcot_mapping_requests_status ON hcot_mapping_requests(status, created_at)`,
   `CREATE TABLE IF NOT EXISTS hcot_competencies (
      id INTEGER PRIMARY KEY AUTOINCREMENT,
      name TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'core',
