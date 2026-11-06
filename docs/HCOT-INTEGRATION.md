@@ -14,6 +14,11 @@ Status: **Stage 1 scaffold; not production-ready**.
 - Read-only supervisor review register (writing reviews remains blocked pending verified supervisor permissions).
 - New HCOT records are empty by default and are not populated from the confidential archive.
 
+## Stage 4: Read-only handshake preview
+- `GET /api/hcot/handshake-preview?period=<id>` compares HCOT plans and participants against tracker programmes and assignments.
+- The HCOT `Tracker handshake` tab shows matched/new/ambiguous programmes and potential assignment additions.
+- This endpoint does not mutate the database. Explicit synchronization requires verified identity mapping, server-side role authorization, and approval.
+
 ## Not yet implemented — do not merge into production
 - Full migration of HCOT's 300 KB Preact application and its remaining screens, including costing, workflows and analytics.
 - Secure authentication, user roles, approval segregation and audit authorization.
