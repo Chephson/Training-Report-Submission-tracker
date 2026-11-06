@@ -52,6 +52,24 @@ const SCHEMA = [
      hcot_staff_number TEXT PRIMARY KEY, tracker_staff_id INTEGER NOT NULL UNIQUE,
      verified_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
      FOREIGN KEY(tracker_staff_id) REFERENCES staff(id))`,
+  `CREATE TABLE IF NOT EXISTS hcot_competencies (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     name TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'core',
+     division TEXT, unit TEXT, description TEXT,
+     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS hcot_goals (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
+     scope TEXT NOT NULL DEFAULT 'unit', owner_label TEXT,
+     target_date TEXT, measure TEXT, target_value TEXT,
+     status TEXT NOT NULL DEFAULT 'draft',
+     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS hcot_reviews (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL,
+     staff_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+     rating INTEGER, notes TEXT, reviewed_at TEXT,
+     UNIQUE(plan_id,staff_id),
+     FOREIGN KEY(plan_id) REFERENCES hcot_training_plans(id),
+     FOREIGN KEY(staff_id) REFERENCES staff(id))`,
   `CREATE TABLE IF NOT EXISTS unmatched (
      id INTEGER PRIMARY KEY AUTOINCREMENT, period_id INTEGER, email TEXT, full_name TEXT,
      submitted_at TEXT, reason TEXT, payload TEXT, source TEXT,
