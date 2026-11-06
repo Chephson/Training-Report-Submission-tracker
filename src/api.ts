@@ -533,6 +533,50 @@ api.post('/hcot/plans/:id/participants', async c => {
   return c.json({ok:true,added})
 })
 
+/* HCOT catalogue and planning records. No private HCOT archive data is seeded. */
+api.get('/hcot/competencies', async c => {
+  const rows=await c.env.DB.prepare('SELECT * FROM hcot_competencies ORDER BY name COLLATE NOCASE').all()
+  return c.json({competencies:rows.results||[]})
+})
+api.post('/hcot/competencies', async c => {
+  const b=await c.req.json<{name?:string;category?:string;division?:string;unit?:string;description?:string}>().catch(()=>({}))
+  if(!b.name?.trim()||b.name.length>200)return c.json({error:'Enter a competency name (up to 200 characters).'},400)
+  if(!['core','functional'].includes(b.category||'core'))return c.json({error:'Invalid competency category.'},400)
+  const result=await c.env.DB.prepare('INSERT INTO hcot_competencies (name,category,division,unit,description) VALUES (?,?,?,?,?)')
+    .bind(b.name.trim(),b.category||'core',b.division?.trim()||null,b.unit?.trim()||null,b.description?.trim()||null).run()
+  return c.json({ok:true,id:result.meta.last_row_id},201)
+})
+api.get('/hcot/goals', async c => {
+  const rows=await c.env.DB.prepare('SELECT * FROM hcot_goals ORDER BY id DESC').all()
+  return c.json({goals:rows.results||[]})
+})
+api.post('/hcot/goals', async c => {
+  const b=await c.req.json<{title?:string;scope?:string;owner_label?:string;target_date?:string;measure?:string;target_value?:string}>().catch(()=>({}))
+  if(!b.title?.trim()||b.title.length>250)return c.json({error:'Enter a goal title (up to 250 characters).'},400)
+  if(!['unit','individual'].includes(b.scope||'unit'))return c.json({error:'Invalid goal scope.'},400)
+  const result=await c.env.DB.prepare('INSERT INTO hcot_goals (title,scope,owner_label,target_date,measure,target_value) VALUES (?,?,?,?,?,?)')
+    .bind(b.title.trim(),b.scope||'unit',b.owner_label?.trim()||null,b.target_date||null,b.measure?.trim()||null,b.target_value?.trim()||null).run()
+  return c.json({ok:true,id:result.meta.last_row_id},201)
+})
+api.get('/hcot/calendar', async c => {
+  const year=(c.req.query('year')||String(new Date().getUTCFullYear())).trim()
+  if(!/^\\d{4}$/.test(year))return c.json({error:'Invalid year.'},400)
+  const rows=await c.env.DB.prepare(`SELECT p.*, (SELECT COUNT(*) FROM hcot_participants h WHERE h.plan_id=p.id) AS participants
+    FROM hcot_training_plans p WHERE substr(p.start_date,1,4)=? ORDER BY p.start_date,p.title`).bind(year).all()
+  return c.json({plans:rows.results||[],year})
+})
+api.get('/hcot/reviews', async c => {
+  const planId=Number(c.req.query('plan_id'))
+  if(!Number.isInteger(planId)||planId<=0)return c.json({error:'Select a training plan.'},400)
+  const rows=await c.env.DB.prepare(`SELECT hp.plan_id,hp.staff_id,st.full_name,st.email,
+    hr.status,hr.rating,hr.notes,hr.reviewed_at
+    FROM hcot_participants hp JOIN staff st ON st.id=hp.staff_id
+    LEFT JOIN hcot_reviews hr ON hr.plan_id=hp.plan_id AND hr.staff_id=hp.staff_id
+    WHERE hp.plan_id=? ORDER BY st.full_name COLLATE NOCASE`).bind(planId).all()
+  return c.json({reviews:rows.results||[]})
+})
+/* Reviews remain read-only until verified supervisor identity and permissions are implemented. */
+
 /* ---------------- staff training history ---------------- */
 api.get('/training-history', async (c) => {
   const db = c.env.DB
