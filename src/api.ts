@@ -32,7 +32,7 @@ import {
 import { seedDemo } from './lib/seed'
 import { previewHandshake } from './lib/hcot-handshake'
 
-export type Env = { DB: D1Database; HCOT_ADMIN_TOKEN?: string }
+export type Env = { DB: D1Database; HCOT_ADMIN_TOKEN?: string; HCOT_MAPPING_WRITES_ENABLED?: string }
 const api = new Hono<{ Bindings: Env }>()
 
 api.use('/*', cors({ origin: '*', allowHeaders: ['Content-Type', 'X-Access-Code'] }))
@@ -644,6 +644,7 @@ api.post('/hcot/mapping-validate', async c => {
 /* Explicitly approved identity links require a separate server-side administrator token.
    Never use the general tracker access code for this privileged operation. */
 api.post('/hcot/mapping-approve', async c => {
+  if(c.env.HCOT_MAPPING_WRITES_ENABLED!=='true')return c.json({error:'Staff mapping writes are disabled pending security approval.'},403)
   const secret=c.env.HCOT_ADMIN_TOKEN
   const supplied=c.req.header('x-hcot-admin-token')||''
   if(!secret||secret.length<24||!supplied)return c.json({error:'HCOT administrator approval is not configured.'},403)
@@ -661,9 +662,17 @@ api.post('/hcot/mapping-approve', async c => {
   const existingNumber=await c.env.DB.prepare('SELECT tracker_staff_id FROM hcot_staff_links WHERE hcot_staff_number=?').bind(number).first<{tracker_staff_id:number}>()
   const existingStaff=await c.env.DB.prepare('SELECT hcot_staff_number FROM hcot_staff_links WHERE tracker_staff_id=?').bind(staffId).first<{hcot_staff_number:string}>()
   if(existingNumber||existingStaff)return c.json({error:'A mapping already exists; no changes made.'},409)
-  const result=await c.env.DB.prepare('INSERT OR IGNORE INTO hcot_staff_links (hcot_staff_number,tracker_staff_id) VALUES (?,?)').bind(number,staffId).run()
-  if(result.meta.changes!==1)return c.json({error:'Mapping conflict; no changes made.'},409)
-  await log(c.env.DB,'hcot.mapping.approved',JSON.stringify({hcot_staff_number:number,tracker_staff_id:staffId,note}),'hcot_admin')
+  const eventDetail=JSON.stringify({hcot_staff_number:number,tracker_staff_id:staffId,note})
+  try {
+    const results=await c.env.DB.batch([
+      c.env.DB.prepare('INSERT INTO hcot_staff_links (hcot_staff_number,tracker_staff_id) VALUES (?,?)').bind(number,staffId),
+      c.env.DB.prepare('INSERT INTO activity (event,detail,actor) VALUES (?,?,?)').bind('hcot.mapping.approved',eventDetail,'hcot_admin')
+    ])
+    if(results[0].meta.changes!==1||results[1].meta.changes!==1)
+      return c.json({error:'Mapping could not be confirmed; investigate before retrying.'},500)
+  }catch{
+    return c.json({error:'Mapping conflict or audit failure; no mapping approved.'},409)
+  }
   return c.json({ok:true,link_created:true,automatic_sync_enabled:false},201)
 })
 
