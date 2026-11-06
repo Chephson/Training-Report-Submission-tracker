@@ -784,11 +784,12 @@ api.get('/training-history', async (c) => {
   const staff = await db.prepare('SELECT id, full_name, email, team FROM staff ORDER BY full_name COLLATE NOCASE').all()
   const records = rows.results ?? []
   const distinctStaff = new Set(records.map((r: any) => r.staff_id)).size
+  const distinctProgrammes = new Set(records.map((r: any) => String(r.training_programme ?? '').trim().replace(/\s+/g, ' ').toLowerCase()).filter(Boolean)).size
   return c.json({
     records,
     staff: staff.results ?? [],
     years: (years.results ?? []).map((r) => r.year).filter(Boolean),
-    summary: { submissions: records.length, staff: distinctStaff, programmes: records.length },
+    summary: { submissions: records.length, staff: distinctStaff, programmes: distinctProgrammes },
   })
 })
 
