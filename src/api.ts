@@ -49,8 +49,18 @@ api.use('/hcot/*', async (c, next) => {
       guidance: 'Configure both variables in the Cloudflare Pages environment serving this deployment, then redeploy.',
     }, 503)
   }
+  const assertion = c.req.header('cf-access-jwt-assertion')
+  if (!assertion) return c.json({
+    error: 'Cloudflare Access JWT assertion not received by the HCOT API.',
+    code: 'HCOT_ACCESS_ASSERTION_MISSING',
+    guidance: 'Check that the Access application protects the exact preview hostname and /api/hcot/* paths. Do not disable Access.',
+  }, 401)
   const identity = await verifyAccessJwt(c.req.raw, c.env)
-  if (!identity) return c.json({ error: 'Cloudflare Access authentication required.' }, 401)
+  if (!identity) return c.json({
+    error: 'Cloudflare Access JWT verification failed.',
+    code: 'HCOT_ACCESS_ASSERTION_REJECTED',
+    guidance: 'Check the Access application AUD, team domain, token validity and Access JWKS availability.',
+  }, 401)
   await next()
 })
 
