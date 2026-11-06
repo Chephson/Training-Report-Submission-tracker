@@ -577,6 +577,16 @@ api.get('/hcot/reviews', async c => {
 })
 /* Reviews remain read-only until verified supervisor identity and permissions are implemented. */
 
+api.get('/hcot/cost-estimates', async c => {
+  const rows=await c.env.DB.prepare(`SELECT ce.id,ce.plan_id,ce.staff_id,ce.currency,
+    ce.allowance_amount,ce.transport_amount,ce.accommodation_amount,
+    ce.course_fee_amount,ce.total_amount,ce.rate_basis,ce.status,
+    p.title AS training_title,st.full_name AS staff_name
+    FROM hcot_cost_estimates ce
+    JOIN hcot_training_plans p ON p.id=ce.plan_id
+    JOIN staff st ON st.id=ce.staff_id ORDER BY ce.id DESC`).all()
+  return c.json({estimates:rows.results||[]})
+})
 /* ---------------- staff training history ---------------- */
 api.get('/training-history', async (c) => {
   const db = c.env.DB
