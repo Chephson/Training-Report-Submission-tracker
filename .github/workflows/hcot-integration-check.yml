@@ -41,5 +41,7 @@ jobs:
         run: node --test tests/programme-reporting.test.mjs
       - name: Outstanding programme reports regression tests
         run: node --test tests/outstanding-programme-reports.test.mjs
+      - name: Outstanding dashboard regression tests
+        run: node --test tests/outstanding-dashboard.test.mjs
       - name: HCOT handshake regression tests
         run: node --experimental-strip-types --test tests/hcot-handshake.test.mjs
