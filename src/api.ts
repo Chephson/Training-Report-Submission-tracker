@@ -38,6 +38,22 @@ const api = new Hono<{ Bindings: Env }>()
 
 api.use('/*', cors({ origin: (origin, c) => { try { return new URL(origin).origin === new URL(c.req.url).origin ? origin : '' } catch { return '' } }, allowHeaders: ['Content-Type', 'X-Access-Code'] }))
 
+/* Reject HCOT requests with missing Access configuration before any D1 work.
+   The existing authentication middleware still validates the JWT and access code. */
+api.use('/hcot/*', async (c, next) => {
+  if (!c.env.HCOT_ACCESS_TEAM_DOMAIN?.trim() || !c.env.HCOT_ACCESS_AUD?.trim()) {
+    return c.json({
+      error: 'HCOT Access verification not configured.',
+      code: 'HCOT_ACCESS_CONFIG_MISSING',
+      environment_variables_required: ['HCOT_ACCESS_TEAM_DOMAIN', 'HCOT_ACCESS_AUD'],
+      guidance: 'Configure both variables in the Cloudflare Pages environment serving this deployment, then redeploy.',
+    }, 503)
+  }
+  const identity = await verifyAccessJwt(c.req.raw, c.env)
+  if (!identity) return c.json({ error: 'Cloudflare Access authentication required.' }, 401)
+  await next()
+})
+
 /* ---------------- schema + defaults on every request ---------------- */
 api.use('/*', async (c, next) => {
   await ensureSchema(c.env.DB)
