@@ -70,8 +70,13 @@ api.use('/*', async (c, next) => {
   if (PUBLIC_PATHS.some((p) => path.startsWith(p))) return next()
 
   if (path === '/hcot' || path.startsWith('/hcot/')) {
-    if (!c.env.HCOT_ACCESS_TEAM_DOMAIN || !c.env.HCOT_ACCESS_AUD) {
-      return c.json({ error: 'HCOT Access verification not configured.' }, 503)
+    if (!c.env.HCOT_ACCESS_TEAM_DOMAIN?.trim() || !c.env.HCOT_ACCESS_AUD?.trim()) {
+      return c.json({
+        error: 'HCOT Access verification not configured.',
+        code: 'HCOT_ACCESS_CONFIG_MISSING',
+        environment_variables_required: ['HCOT_ACCESS_TEAM_DOMAIN', 'HCOT_ACCESS_AUD'],
+        guidance: 'Configure both variables in the Cloudflare Pages environment serving this deployment, then redeploy.',
+      }, 503)
     }
     const identity = await verifyAccessJwt(c.req.raw, c.env)
     if (!identity) return c.json({ error: 'Cloudflare Access authentication required.' }, 401)
