@@ -31,6 +31,7 @@ import {
 
 import { seedDemo } from './lib/seed'
 import { previewHandshake } from './lib/hcot-handshake'
+import { verifyAccessJwt } from './lib/hcot-access'
 
 export type Env = { DB: D1Database }
 const api = new Hono<{ Bindings: Env }>()
