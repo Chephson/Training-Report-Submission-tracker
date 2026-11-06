@@ -666,6 +666,21 @@ api.get('/hcot/mapping-requests', async c => {
   return c.json({read_only:true,requests:rows.results||[],approvals_enabled:false})
 })
 
+api.get('/hcot/access-session', async c => {
+  const identity = await verifyAccessJwt(c.req.raw, c.env)
+  if (!identity) return c.json({ error: 'Cloudflare Access authentication required.' }, 401)
+  return c.json({
+    authenticated: true,
+    email: identity.email,
+    role: 'viewer',
+    role_source: 'temporary_read_only_default',
+    maker_enabled: false,
+    checker_enabled: false,
+    mapping_approval_enabled: false,
+    automatic_sync_enabled: false
+  })
+})
+
 api.get('/hcot/mapping-security', async c => {
   return c.json({
     approval_enabled:false,
