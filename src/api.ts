@@ -588,6 +588,20 @@ api.get('/hcot/identity-audit', async c => {
   return c.json({verified_links:linked?.n||0,participant_records:participants?.n||0,inactive_participants:inactive?.n||0,missing_staff:missing?.n||0,read_only:true})
 })
 
+/* Staff mapping readiness is diagnostic only; no staff IDs or PII leave this endpoint. */
+api.get('/hcot/mapping-readiness', async c => {
+  const rows = await c.env.DB.prepare(`SELECT
+    (SELECT COUNT(*) FROM staff WHERE active=1) AS active_staff,
+    (SELECT COUNT(*) FROM hcot_staff_links l JOIN staff s ON s.id=l.tracker_staff_id WHERE s.active=1) AS active_verified_links,
+    (SELECT COUNT(*) FROM hcot_staff_links l LEFT JOIN staff s ON s.id=l.tracker_staff_id WHERE s.id IS NULL) AS orphan_links,
+    (SELECT COUNT(*) FROM hcot_staff_links l JOIN staff s ON s.id=l.tracker_staff_id WHERE s.active=0) AS inactive_links,
+    (SELECT COUNT(DISTINCT p.staff_id) FROM hcot_participants p LEFT JOIN hcot_staff_links l ON l.tracker_staff_id=p.staff_id WHERE l.tracker_staff_id IS NULL) AS unlinked_participants,
+    (SELECT COUNT(*) FROM hcot_participants p JOIN staff s ON s.id=p.staff_id WHERE s.active=0) AS inactive_participant_assignments`).first<{active_staff:number;active_verified_links:number;orphan_links:number;inactive_links:number;unlinked_participants:number;inactive_participant_assignments:number}>()
+  const summary=rows||{active_staff:0,active_verified_links:0,orphan_links:0,inactive_links:0,unlinked_participants:0,inactive_participant_assignments:0}
+  return c.json({read_only:true,summary,ready_for_automatic_sync:false,
+    reasons:['Staff identity links require independent verification','Role-based authorization and approval controls are not implemented']})
+})
+
 api.get('/hcot/handshake-preview', async c => {
   const periodId=Number(c.req.query('period')) || (await defaultPeriod(c.env.DB))?.id || 0
   if(!Number.isInteger(periodId)||periodId<=0)return c.json({error:'Select a valid reporting period.'},400)
