@@ -26,6 +26,10 @@ jobs:
         run: npm run build
       - name: Check browser JavaScript syntax
         run: node --check public/static/app.js
+      - name: Dedicated HCOT P0 authorization security tests
+        run: node --experimental-strip-types --test tests/hcot-p0-authorization.test.mjs
+      - name: Full regression suite including HTTP authorization and no-write checks
+        run: node --experimental-strip-types --experimental-loader ./tests/ts-extension-loader.mjs --test tests/*.test.mjs
       - name: Multiple-submission regression tests
         run: node --experimental-strip-types --test tests/multiple-submissions.test.mjs
       - name: Microsoft Forms ingestion regression tests
