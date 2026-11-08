@@ -9,7 +9,7 @@ const auth = api.slice(api.indexOf('/* P0: HCOT least-privilege'), api.indexOf('
 
 test('draft plan updates require verified administrator authorization', () => {
   assert.match(auth, /method === 'PATCH'/)
-  assert.match(auth, /\^\/hcot\/plans\/\[\^\/\]\+\$/)
+  assert.ok(auth.includes(String.raw`/^\/hcot\/plans\/[^/]+$/`), 'PATCH training-plan route must be administrator-protected')
   assert.match(auth, /admins\.includes\(identity\.email\.trim\(\)\.toLowerCase\(\)\)/)
   assert.match(auth, /permission required\.' }, 403/)
 })
@@ -24,7 +24,7 @@ test('successful update emits a verified-actor audit entry with plan ID', () => 
 })
 test('UI offers Edit draft only for draft plans and persists via PATCH', () => {
   assert.match(ui, /p\.status==='draft'\?'<button class="btn btn-sm hcot-edit"/)
-  assert.match(ui, /\$\$\('\.hcot-edit'\)\.forEach/)
+  assert.match(ui, /\$\('\.hcot-edit'\)\.forEach/)
   assert.match(ui, /method:'PATCH',body:JSON\.stringify\(payload\)/)
   assert.match(ui, /renderHCOT\(el\)/)
   assert.match(ui, /hcot-edit-cancel/)
