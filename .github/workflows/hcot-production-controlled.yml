@@ -48,6 +48,7 @@ jobs:
         with:
           ref: ${{ inputs.approved_commit }}
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Verify exact source and approved integration ancestry
         env:
