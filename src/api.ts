@@ -65,12 +65,6 @@ api.use('/hcot/*', async (c, next) => {
   await next()
 })
 
-/* ---------------- schema migration (pre-auth, follow-up remediation needed) ---------------- */
-api.use('/*', async (c, next) => {
-  await ensureSchema(c.env.DB)
-  await next()
-})
-
 /* ---------------- simple access gate ---------------- */
 const PUBLIC_PATHS = ['/login', '/session', '/ingest/']
 
@@ -104,7 +98,17 @@ api.use('/*', async (c, next) => {
     if (!identity) return c.json({ error: 'Cloudflare Access authentication required.' }, 401)
   }
 
-  const code = await getSetting(c.env.DB, 'access_code')
+  // On a brand-new installation the settings table may not exist yet.
+  // A missing table means first-time setup; other database errors fail closed.
+  let code = ''
+  try {
+    code = await getSetting(c.env.DB, 'access_code')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (!/no such table:\\s*settings\\b/i.test(message)) {
+      return c.json({ error: 'Tracker authorization unavailable.' }, 503)
+    }
+  }
   if (!code) {
     if (path.startsWith('/hcot/')) return c.json({ error: 'HCOT access is disabled until the tracker access code is configured.' }, 403)
     return next()
@@ -179,6 +183,13 @@ api.use('/hcot/*', async (c, next) => {
   const identity = await verifyAccessJwt(c.req.raw, c.env)
   if (!identity) return c.json({ error: 'Verified Cloudflare Access identity required.' }, 401)
   if (!admins.includes(identity.email)) return c.json({ error: 'HCOT administrator permission required.' }, 403)
+  await next()
+})
+
+/* Schema migration runs after the shared-code gate for protected routes.
+   Public login/session/ingest retain their existing bootstrap behavior. */
+api.use('/*', async (c, next) => {
+  await ensureSchema(c.env.DB)
   await next()
 })
 
