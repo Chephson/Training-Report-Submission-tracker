@@ -178,16 +178,18 @@ api.use('/hcot/*', async (c, next) => {
   await next()
 })
 
-/* Schema migration runs after the shared-code gate for protected routes.
-   Public login/session/ingest retain their existing bootstrap behavior. */
+/* Schema/bootstrap writes occur only after authorization.
+   Verified HCOT viewer requests remain strictly read-only, including middleware. */
 api.use('/*', async (c, next) => {
+  if (isHcotViewerRead(c.req.method, c.req.path.replace(/^\/api/, ''))) return next()
   await ensureSchema(c.env.DB)
   await next()
 })
 
-/* Run seed/default/token writes only after shared-code and HCOT role checks.
-   Schema migration still precedes the shared-code gate and is tracked separately. */
+/* Do not let an otherwise read-only HCOT viewer request seed or rotate
+   tracker data. Administrative operations keep the existing bootstrap path. */
 api.use('/*', async (c, next) => {
+  if (isHcotViewerRead(c.req.method, c.req.path.replace(/^\/api/, ''))) return next()
   // Seed first: sample data creates its own periods.
   await seedDemo(c.env.DB).catch(() => {})
   await ensureDefaultPeriod(c.env.DB)
