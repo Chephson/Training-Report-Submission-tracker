@@ -65,14 +65,9 @@ api.use('/hcot/*', async (c, next) => {
   await next()
 })
 
-/* ---------------- schema + defaults on every request ---------------- */
+/* ---------------- schema migration (pre-auth, follow-up remediation needed) ---------------- */
 api.use('/*', async (c, next) => {
   await ensureSchema(c.env.DB)
-  // Seed first: the sample data creates its own periods, so the "create one
-  // default period" step must not run ahead of it and leave an empty extra.
-  await seedDemo(c.env.DB).catch(() => {})
-  await ensureDefaultPeriod(c.env.DB)
-  await ensureTokens(c.env.DB)
   await next()
 })
 
@@ -184,6 +179,16 @@ api.use('/hcot/*', async (c, next) => {
   const identity = await verifyAccessJwt(c.req.raw, c.env)
   if (!identity) return c.json({ error: 'Verified Cloudflare Access identity required.' }, 401)
   if (!admins.includes(identity.email)) return c.json({ error: 'HCOT administrator permission required.' }, 403)
+  await next()
+})
+
+/* Run seed/default/token writes only after shared-code and HCOT role checks.
+   Schema migration still precedes the shared-code gate and is tracked separately. */
+api.use('/*', async (c, next) => {
+  // Seed first: sample data creates its own periods.
+  await seedDemo(c.env.DB).catch(() => {})
+  await ensureDefaultPeriod(c.env.DB)
+  await ensureTokens(c.env.DB)
   await next()
 })
 
