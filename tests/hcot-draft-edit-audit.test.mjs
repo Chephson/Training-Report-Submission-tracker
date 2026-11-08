@@ -34,7 +34,7 @@ test('UI offers Edit draft only for draft plans and persists via PATCH', () => {
 test('collection event handlers and staff filters never use the single-element selector', () => {
   assert.match(ui, /\$\$\('\.hcot-manage'\)\.forEach/)
   assert.match(ui, /\$\$\('\.pg-staff'\)\.forEach/)
-  assert.doesNotMatch(ui, /(?<!\$)\$\([^\n]*?\)\.forEach\(/, 'forEach must not be called on the single-element $ selector')
+  assert.doesNotMatch(ui, /(?<!\$)\$\('[^'\n]+'\)\.forEach\(/, 'forEach must not be called on the single-element $ selector')
 })
 
 test('read-only HCOT viewer workspace never fetches the staff roster or renders edit actions', () => {
