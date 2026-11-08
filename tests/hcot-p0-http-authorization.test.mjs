@@ -115,8 +115,8 @@ test('runtime: denied HCOT viewer cannot trigger seeding, default periods or tok
     await sign('viewer@example.invalid'), { title: 'Rejected plan' })
   assert.equal(response.status, 403)
   const seedOrDefaultWrites = queries.filter(q => q.op === 'run' &&
-    /\\b(?:INSERT|UPDATE|DELETE)\\b/i.test(q.sql) &&
-    !/\\b(?:CREATE|ALTER)\\b/i.test(q.sql))
+    /\b(?:INSERT|UPDATE|DELETE)\b/i.test(q.sql) &&
+    !/\b(?:CREATE|ALTER)\b/i.test(q.sql))
   assert.deepEqual(seedOrDefaultWrites, [])
 })
 
