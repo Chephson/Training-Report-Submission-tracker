@@ -1,0 +1,103 @@
+name: HCOT controlled Production release (manual approval required)
+
+# This workflow is intentionally manual-only. Do not enable it on main
+# or dispatch it until the owner explicitly authorizes Production release.
+on:
+  workflow_dispatch:
+    inputs:
+      approved_commit:
+        description: 'Exact 40-character approved release commit SHA'
+        required: true
+        type: string
+      approval_phrase:
+        description: 'Type APPROVE-HCOT-PRODUCTION after explicit owner authorization'
+        required: true
+        type: string
+      recovery_bookmark:
+        description: 'Verified current Production D1 Time Travel bookmark'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-pages-production
+  cancel-in-progress: false
+
+jobs:
+  controlled-release:
+    # GitHub environment reviewers should be required for cloudflare-production.
+    environment: cloudflare-production
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require explicit release inputs
+        env:
+          APPROVAL: ${{ inputs.approval_phrase }}
+          SHA: ${{ inputs.approved_commit }}
+          BOOKMARK: ${{ inputs.recovery_bookmark }}
+        run: |
+          set -euo pipefail
+          test "$APPROVAL" = "APPROVE-HCOT-PRODUCTION" || { echo "Release approval missing"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid release SHA"; exit 1; }
+          test -n "$BOOKMARK" || { echo "Production D1 recovery bookmark required"; exit 1; }
+          echo "Approval inputs supplied; environment approval and checks still required."
+
+      - name: Checkout exact approved source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.approved_commit }}
+          persist-credentials: false
+
+      - name: Verify exact source and approved integration ancestry
+        env:
+          SHA: ${{ inputs.approved_commit }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SHA"
+          # The release must include the reviewed HCOT roster implementation.
+          git merge-base --is-ancestor 012ceb14be2724cd1cee964b1997c537be21559b HEAD
+
+      - name: Verify Cloudflare project and both D1 bindings (read-only)
+        env:
+          PROJECT_NAME: ${{ vars.CLOUDFLARE_PAGES_PROJECT_NAME }}
+          ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$PROJECT_NAME" = "training-report-submission-tracker"
+          test -n "$ACCOUNT_ID"
+          test -n "$API_TOKEN"
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/pages/projects/$PROJECT_NAME" > /tmp/pages-project.json
+          jq -e --arg prod "b8e12cd1-56e0-4460-a570-15b58fc4219c" --arg preview "26b2a079-accf-4d05-bf1c-c1e8ca523e1e" '
+            .success == true and .result.production_branch == "main" and
+            ((.result.deployment_configs.production.d1_databases.DB.id //
+              .result.deployment_configs.production.d1_databases.DB.database_id // "") == $prod) and
+            ((.result.deployment_configs.preview.d1_databases.DB.id //
+              .result.deployment_configs.preview.d1_databases.DB.database_id // "") == $preview)
+          ' /tmp/pages-project.json >/dev/null
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Build and test approved release
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          node --check public/static/app.js
+          node --experimental-strip-types --experimental-loader ./tests/ts-extension-loader.mjs --test tests/*.test.mjs
+
+      - name: Deploy exact approved commit to Production (NO D1 writes)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT_NAME: ${{ vars.CLOUDFLARE_PAGES_PROJECT_NAME }}
+        run: |
+          set -euo pipefail
+          npx wrangler pages deploy dist --project-name "$PROJECT_NAME" --branch main
+          echo "Deploy completed. Perform documented post-release acceptance and D1 count comparison immediately."
