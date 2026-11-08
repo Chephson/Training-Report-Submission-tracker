@@ -949,7 +949,7 @@ async function renderHCOT(el) {
   const plans=data.plans||[],staff=roster.staff||[]
   el.innerHTML='<div class="card"><div class="card-body"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn hcot-tab" data-section="calendar">Calendar</button><button class="btn hcot-tab" data-section="competencies">Competencies</button><button class="btn hcot-tab" data-section="goals">Goals & KPIs</button><button class="btn hcot-tab" data-section="reviews">Evaluations</button><button class="btn hcot-tab" data-section="costing">Costing</button><button class="btn hcot-tab" data-section="handshake">Tracker handshake</button><button class="btn hcot-tab" data-section="identity">Staff identity audit</button></div></div></div><div id="hcot-extra" class="mt-16"></div><div class="card mt-16"><div class="card-head"><div><h3>HCOT Training Monitor — Training planning</h3><p>Unified workspace preview. Draft plans do not automatically create report assignments.</p></div></div><div class="card-body"><label class="field"><span>Training programme title</span><input id="hcot-title" placeholder="Enter training title"></label><div class="grid grid-2"><label class="field"><span>Start date</span><input id="hcot-start" type="date"></label><label class="field"><span>End date</span><input id="hcot-end" type="date"></label></div><label class="field"><span>Location</span><input id="hcot-location"></label><label class="field"><span>Provider</span><input id="hcot-provider"></label><button class="btn btn-primary" id="hcot-create">Create draft training plan</button></div></div>'+
   '<div class="card mt-16"><div class="card-head"><h3>HCOT draft training plans</h3></div><div class="table-wrap"><table><thead><tr><th>Training</th><th>Dates</th><th>Location</th><th>Participants</th><th></th></tr></thead><tbody>'+
-  plans.map(p=>'<tr><td>'+esc(p.title)+'</td><td>'+esc(p.start_date||'—')+' – '+esc(p.end_date||'—')+'</td><td>'+esc(p.location||'—')+'</td><td>'+p.participant_count+'</td><td><button class="btn btn-sm hcot-manage" data-id="'+p.id+'">Manage participants</button></td></tr>').join('')+
+  plans.map(p=>'<tr><td>'+esc(p.title)+'</td><td>'+esc(p.start_date||'—')+' – '+esc(p.end_date||'—')+'</td><td>'+esc(p.location||'—')+'</td><td>'+p.participant_count+'</td><td>'+(p.status==='draft'?'<button class="btn btn-sm hcot-edit" data-id="'+p.id+'">Edit draft</button> ':'')+'<button class="btn btn-sm hcot-manage" data-id="'+p.id+'">Manage participants</button></td></tr>').join('')+
   (plans.length?'':'<tr><td colspan="5">No draft training plans yet.</td></tr>')+'</tbody></table></div></div><div id="hcot-participants" class="mt-16"></div>'
   $$('.hcot-tab').forEach(btn=>btn.onclick=()=>renderHCOTSection(btn.dataset.section))
   renderHCOTSection('calendar')
@@ -959,7 +959,21 @@ async function renderHCOT(el) {
       toast('Draft training plan created');renderHCOT(el)
     }catch(e){toast(e.message,true)}
   }
-  $$('.hcot-manage').forEach(btn=>btn.onclick=async()=>{
+  $('.hcot-edit').forEach(btn=>btn.onclick=()=>{
+    const plan=plans.find(p=>p.id===Number(btn.dataset.id))
+    if(!plan || plan.status!=='draft')return
+    const container=$('#hcot-participants')
+    container.innerHTML='<div class="card"><div class="card-head"><h3>Edit draft training plan</h3></div><div class="card-body"><label class="field"><span>Training programme title</span><input id="hcot-edit-title" maxlength="250"></label><div class="grid grid-2"><label class="field"><span>Start date</span><input id="hcot-edit-start" type="date"></label><label class="field"><span>End date</span><input id="hcot-edit-end" type="date"></label></div><label class="field"><span>Location</span><input id="hcot-edit-location"></label><label class="field"><span>Provider</span><input id="hcot-edit-provider"></label><label class="field"><span>Notes</span><textarea id="hcot-edit-notes"></textarea></label><button class="btn btn-primary" id="hcot-edit-save">Save changes</button> <button class="btn" id="hcot-edit-cancel">Cancel</button></div></div>'
+    for(const [field,value] of Object.entries({title:plan.title,start:plan.start_date,end:plan.end_date,location:plan.location,provider:plan.provider,notes:plan.notes}))$('#hcot-edit-'+field).value=value||''
+    $('#hcot-edit-cancel').onclick=()=>{container.innerHTML=''}
+    $('#hcot-edit-save').onclick=async()=>{
+      const title=$('#hcot-edit-title').value.trim()
+      if(!title || title.length>250){toast('Enter a training title (up to 250 characters).',true);return}
+      const payload={title,start_date:$('#hcot-edit-start').value,end_date:$('#hcot-edit-end').value,location:$('#hcot-edit-location').value,provider:$('#hcot-edit-provider').value,notes:$('#hcot-edit-notes').value}
+      try{await api('/hcot/plans/'+plan.id,{method:'PATCH',body:JSON.stringify(payload)});toast('Draft training plan updated');renderHCOT(el)}catch(e){toast(e.message,true)}
+    }
+  })
+  $('.hcot-manage').forEach(btn=>btn.onclick=async()=>{
     const id=Number(btn.dataset.id),participants=await api('/hcot/plans/'+id+'/participants')
     const selected=new Set((participants.staff||[]).map(x=>x.id))
     $('#hcot-participants').innerHTML='<div class="card"><div class="card-head"><h3>Participants — '+esc(plans.find(p=>p.id===id)?.title||'')+'</h3></div><div class="card-body"><label class="field"><span>Search staff</span><input id="hcot-search" type="search" placeholder="Name or email"></label><div style="max-height:230px;overflow:auto">'+staff.map(x=>'<label class="hcot-staff-row" style="display:block;padding:5px"><input type="checkbox" class="hcot-staff" value="'+x.id+'" '+(selected.has(x.id)?'checked disabled':'')+'> '+esc(x.full_name)+' — '+esc(x.email)+'</label>').join('')+'</div><button class="btn btn-primary mt-12" id="hcot-add">Add selected participants</button></div></div>'
