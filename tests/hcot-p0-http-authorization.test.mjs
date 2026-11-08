@@ -189,3 +189,17 @@ test('runtime: reset and mapping approval remain forbidden even with valid share
   assert.equal((await response.json()).code, 'WORKSPACE_RESET_DISABLED')
   assert.ok(!queries.some(q => /DELETE FROM/.test(q.sql)))
 })
+
+test('runtime: verified administrator email is matched case-insensitively for writes and session role', async t => {
+  const { sign, publicKey } = await signedFixture()
+  globalThis.fetch = async () => new Response(JSON.stringify({ keys: [publicKey] }), { status: 200 })
+  t.after(() => { globalThis.fetch = originalFetch })
+  const { db, queries } = fakeDb()
+  const token = await sign('ADMIN@EXAMPLE.INVALID')
+  const create = await call(db, baseEnv, 'POST', '/hcot/plans', token, { title: 'Case normalization test' })
+  assert.equal(create.status, 201)
+  assert.ok(hcotWrites(queries).some(q => /INSERT INTO hcot_training_plans/.test(q.sql)))
+  const session = await call(db, baseEnv, 'GET', '/hcot/access-session', token)
+  assert.equal(session.status, 200)
+  assert.equal((await session.json()).role, 'admin')
+})
