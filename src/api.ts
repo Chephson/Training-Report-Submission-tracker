@@ -30,20 +30,39 @@ import {
 } from './lib/ingest'
 
 import { seedDemo } from './lib/seed'
+import { previewHandshake } from './lib/hcot-handshake'
+import { verifyAccessJwt } from './lib/hcot-access'
+import { isHcotViewerRead } from './lib/hcot-roles'
 
-export type Env = { DB: D1Database }
+export type Env = { DB: D1Database; HCOT_ACCESS_TEAM_DOMAIN?: string; HCOT_ACCESS_AUD?: string; HCOT_SETTINGS_ADMIN_EMAILS?: string }
 const api = new Hono<{ Bindings: Env }>()
 
-api.use('/*', cors({ origin: '*', allowHeaders: ['Content-Type', 'X-Access-Code'] }))
+api.use('/*', cors({ origin: (origin, c) => { try { return new URL(origin).origin === new URL(c.req.url).origin ? origin : '' } catch { return '' } }, allowHeaders: ['Content-Type', 'X-Access-Code'] }))
 
-/* ---------------- schema + defaults on every request ---------------- */
-api.use('/*', async (c, next) => {
-  await ensureSchema(c.env.DB)
-  // Seed first: the sample data creates its own periods, so the "create one
-  // default period" step must not run ahead of it and leave an empty extra.
-  await seedDemo(c.env.DB).catch(() => {})
-  await ensureDefaultPeriod(c.env.DB)
-  await ensureTokens(c.env.DB)
+/* Reject HCOT requests with missing Access configuration before any D1 work.
+   The existing authentication middleware still validates the JWT and access code. */
+api.use('/hcot/*', async (c, next) => {
+  if (!c.env.HCOT_ACCESS_TEAM_DOMAIN?.trim() || !c.env.HCOT_ACCESS_AUD?.trim()) {
+    return c.json({
+      error: 'HCOT Access verification not configured.',
+      code: 'HCOT_ACCESS_CONFIG_MISSING',
+      environment_variables_required: ['HCOT_ACCESS_TEAM_DOMAIN', 'HCOT_ACCESS_AUD'],
+      guidance: 'Configure both variables in the Cloudflare Pages environment serving this deployment, then redeploy.',
+    }, 503)
+  }
+  const assertion = c.req.header('cf-access-jwt-assertion')
+  const hasAccessCookie = (c.req.header('cookie') || '').split(';').some(part => part.trim().startsWith('CF_Authorization='))
+  if (!assertion && !hasAccessCookie) return c.json({
+    error: 'Cloudflare Access JWT not received in assertion header or authorization cookie.',
+    code: 'HCOT_ACCESS_ASSERTION_MISSING',
+    guidance: 'Check that the Access application protects the exact preview hostname and /api/hcot/* paths, and that the browser sends the Access session cookie. Do not disable Access.',
+  }, 401)
+  const identity = await verifyAccessJwt(c.req.raw, c.env)
+  if (!identity) return c.json({
+    error: 'Cloudflare Access JWT verification failed.',
+    code: 'HCOT_ACCESS_ASSERTION_REJECTED',
+    guidance: 'Check the Access application AUD, team domain, token validity and Access JWKS availability.',
+  }, 401)
   await next()
 })
 
@@ -65,10 +84,43 @@ function readCookie(cookieHeader: string, name: string): string | null {
 
 api.use('/*', async (c, next) => {
   const path = c.req.path.replace('/api', '')
-  if (PUBLIC_PATHS.some((p) => path.startsWith(p))) return next()
+  if (path === '/login' || path === '/session' || path.startsWith('/ingest/')) return next()
 
-  const code = await getSetting(c.env.DB, 'access_code')
-  if (!code) return next()
+  if (path === '/hcot' || path.startsWith('/hcot/')) {
+    if (!c.env.HCOT_ACCESS_TEAM_DOMAIN?.trim() || !c.env.HCOT_ACCESS_AUD?.trim()) {
+      return c.json({
+        error: 'HCOT Access verification not configured.',
+        code: 'HCOT_ACCESS_CONFIG_MISSING',
+        environment_variables_required: ['HCOT_ACCESS_TEAM_DOMAIN', 'HCOT_ACCESS_AUD'],
+        guidance: 'Configure both variables in the Cloudflare Pages environment serving this deployment, then redeploy.',
+      }, 503)
+    }
+    const identity = await verifyAccessJwt(c.req.raw, c.env)
+    if (!identity) return c.json({ error: 'Cloudflare Access authentication required.' }, 401)
+  }
+
+  // On a brand-new installation the settings table may not exist yet.
+  // A missing table means first-time setup; other database errors fail closed.
+  let code = ''
+  try {
+    code = await getSetting(c.env.DB, 'access_code')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (!/no such table:\s*settings\b/i.test(message)) {
+      return c.json({ error: 'Tracker authorization unavailable.' }, 503)
+    }
+  }
+  if (!code) {
+    if (path.startsWith('/hcot/')) return c.json({ error: 'HCOT access is disabled until the tracker access code is configured.' }, 403)
+    // On HCOT-enabled Preview, bootstrap may configure the first access code
+    // through the separately verified Access-admin settings route only.
+    // Do not expose other tracker endpoints before setup completes.
+    if (c.env.HCOT_ACCESS_TEAM_DOMAIN || c.env.HCOT_ACCESS_AUD) {
+      if (path === '/settings' && c.req.method.toUpperCase() === 'POST') return next()
+      return c.json({ error: 'Tracker setup required before accessing this endpoint.', code: 'TRACKER_SETUP_REQUIRED' }, 403)
+    }
+    return next()
+  }
 
   const expected = await sha(`trk:${code}`)
   const header = c.req.header('x-access-code') || ''
@@ -105,6 +157,44 @@ api.post('/login', async (c) => {
 api.get('/session', async (c) => {
   const code = await getSetting(c.env.DB, 'access_code')
   return c.json({ locked: !!code, org_name: await getSetting(c.env.DB, 'org_name', '') })
+})
+
+/* P0: HCOT least-privilege authorization. The shared tracker access code is NOT a role.
+   All HCOT requests first pass the verified Cloudflare Access JWT gate.
+   Stage 1: verified HR viewers may read only explicitly allowlisted HCOT resources.
+   Every other HCOT operation (including all writes) requires a named administrator. */
+api.use('/hcot/*', async (c, next) => {
+  const path = c.req.path.replace(/^\/api/, '')
+  const method = c.req.method.toUpperCase()
+  // Explicit allowlist, not a broad "all GET" exception. New endpoints fail closed.
+  const viewerRead = isHcotViewerRead(method, path)
+  if (viewerRead) return next()
+  const configured = c.env.HCOT_SETTINGS_ADMIN_EMAILS
+  const admins = (configured || '').split(',').map(email => email.trim().toLowerCase()).filter(Boolean)
+  if (!admins.length) return c.json({ error: 'HCOT administrator authorization is not configured.' }, 503)
+  const identity = await verifyAccessJwt(c.req.raw, c.env)
+  if (!identity) return c.json({ error: 'Verified Cloudflare Access identity required.' }, 401)
+  if (!admins.includes(identity.email.trim().toLowerCase())) return c.json({ error: 'HCOT administrator permission required.' }, 403)
+  await next()
+})
+
+/* Schema/bootstrap writes occur only after authorization.
+   Verified HCOT viewer requests remain strictly read-only, including middleware. */
+api.use('/*', async (c, next) => {
+  if (isHcotViewerRead(c.req.method, c.req.path.replace(/^\/api/, ''))) return next()
+  await ensureSchema(c.env.DB)
+  await next()
+})
+
+/* Do not let an otherwise read-only HCOT viewer request seed or rotate
+   tracker data. Administrative operations keep the existing bootstrap path. */
+api.use('/*', async (c, next) => {
+  if (isHcotViewerRead(c.req.method, c.req.path.replace(/^\/api/, ''))) return next()
+  // Seed first: sample data creates its own periods.
+  await seedDemo(c.env.DB).catch(() => {})
+  await ensureDefaultPeriod(c.env.DB)
+  await ensureTokens(c.env.DB)
+  await next()
 })
 
 /* ---------------- periods ---------------- */
@@ -341,12 +431,12 @@ api.get('/overview', async (c) => {
 api.get('/programmes', async (c) => {
   const periodId = Number(c.req.query('period')) || (await defaultPeriod(c.env.DB))?.id || 0
   const rows = await c.env.DB.prepare(`SELECT p.*,
-    (SELECT COUNT(*) FROM programme_assignments a WHERE a.programme_id=p.id AND a.period_id=?) AS assigned,
-    (SELECT COUNT(*) FROM programme_assignments a WHERE a.programme_id=p.id AND a.period_id=?
+    (SELECT COUNT(DISTINCT a.staff_id) FROM programme_assignments a WHERE a.programme_id=p.id AND a.period_id=?) AS assigned,
+    (SELECT COUNT(DISTINCT a.staff_id) FROM programme_assignments a WHERE a.programme_id=p.id AND a.period_id=?
       AND EXISTS (SELECT 1 FROM submissions s WHERE s.staff_id=a.staff_id AND s.period_id=a.period_id
       AND LOWER(TRIM(s.training_programme))=LOWER(TRIM(p.name)))) AS submitted
     FROM programmes p ORDER BY p.name COLLATE NOCASE`).bind(periodId,periodId).all()
-  return c.json({ programmes: (rows.results || []).map((p: any) => ({ ...p, pending: p.assigned-p.submitted })) })
+  return c.json({ programmes: (rows.results || []).map((p: any) => ({ ...p, pending: Math.max(0, p.assigned-p.submitted) })) })
 })
 
 api.post('/programmes', async (c) => {
@@ -461,6 +551,54 @@ api.delete('/programme-assignments/:id', async (c) => {
   return c.json({ok:true})
 })
 
+/* Per-staff outstanding reports across all assigned programmes in one period.
+   Read-only; distinct programme assignments prevent duplicate rows inflating totals. */
+api.get('/outstanding-programme-reports', async (c) => {
+  const periodId = Number(c.req.query('period')) || (await defaultPeriod(c.env.DB))?.id || 0
+  if (!Number.isSafeInteger(periodId) || periodId <= 0) return c.json({error:'Select a valid reporting period.'},400)
+  const period = await c.env.DB.prepare('SELECT id,name FROM periods WHERE id=?').bind(periodId).first()
+  if (!period) return c.json({error:'Reporting period not found.'},404)
+  const result = await c.env.DB.prepare(`SELECT st.id AS staff_id,st.full_name,st.email,st.team,
+    p.id AS programme_id,p.name AS training_programme,
+    CASE WHEN EXISTS (
+      SELECT 1 FROM submissions s WHERE s.staff_id=a.staff_id AND s.period_id=a.period_id
+      AND LOWER(TRIM(s.training_programme))=LOWER(TRIM(p.name))
+    ) THEN 1 ELSE 0 END AS has_submitted
+    FROM (SELECT DISTINCT staff_id,programme_id,period_id FROM programme_assignments WHERE period_id=?) a
+    JOIN staff st ON st.id=a.staff_id JOIN programmes p ON p.id=a.programme_id
+    ORDER BY st.full_name COLLATE NOCASE,p.name COLLATE NOCASE`).bind(periodId).all<{
+      staff_id:number;full_name:string;email:string;team:string|null;
+      programme_id:number;training_programme:string;has_submitted:number
+    }>()
+  const byStaff = new Map<number,{
+    staff_id:number;full_name:string;email:string;team:string|null;
+    assigned:number;submitted:number;pending:number;
+    outstanding_programmes:{programme_id:number;training_programme:string}[]
+  }>()
+  for (const r of result.results || []) {
+    let item = byStaff.get(r.staff_id)
+    if (!item) {
+      item = {staff_id:r.staff_id,full_name:r.full_name,email:r.email,team:r.team,
+        assigned:0,submitted:0,pending:0,outstanding_programmes:[]}
+      byStaff.set(r.staff_id,item)
+    }
+    item.assigned++
+    if (r.has_submitted) item.submitted++
+    else {
+      item.pending++
+      item.outstanding_programmes.push({programme_id:r.programme_id,training_programme:r.training_programme})
+    }
+  }
+  const staff = [...byStaff.values()]
+  return c.json({read_only:true,period,summary:{
+    staff_assigned:staff.length,
+    staff_with_outstanding:staff.filter(s=>s.pending>0).length,
+    assigned_reports:staff.reduce((n,s)=>n+s.assigned,0),
+    submitted_reports:staff.reduce((n,s)=>n+s.submitted,0),
+    outstanding_reports:staff.reduce((n,s)=>n+s.pending,0)
+  },staff})
+})
+
 api.get('/programme-progress', async (c) => {
   const periodId = Number(c.req.query('period')) || (await defaultPeriod(c.env.DB))?.id || 0
   const programmeId = Number(c.req.query('programme_id')) || 0
@@ -487,6 +625,235 @@ api.get('/unassigned-submissions', async (c) => {
   return c.json({submissions:rows.results||[]})
 })
 
+/* HCOT planning module: intentionally isolated from production programme assignments.
+   Publishing/synchronization is deferred until identity and authorization review. */
+api.get('/hcot/plans', async c => {
+  const plans=await c.env.DB.prepare(`SELECT p.*, (SELECT COUNT(*) FROM hcot_participants hp WHERE hp.plan_id=p.id) AS participant_count
+    FROM hcot_training_plans p ORDER BY p.id DESC`).all()
+  return c.json({plans:plans.results||[]})
+})
+api.post('/hcot/plans', async c => {
+  const body=await c.req.json<{title?:string;start_date?:string;end_date?:string;location?:string;provider?:string;notes?:string}>().catch(()=>({}))
+  const title=body.title?.trim()
+  if(!title||title.length>250)return c.json({error:'Enter a training title (up to 250 characters).'},400)
+  const result=await c.env.DB.prepare(`INSERT INTO hcot_training_plans
+    (title,start_date,end_date,location,provider,notes) VALUES (?,?,?,?,?,?)`)
+    .bind(title,body.start_date||null,body.end_date||null,body.location?.trim()||null,body.provider?.trim()||null,body.notes?.trim()||null).run()
+  const actor = await verifyAccessJwt(c.req.raw, c.env)
+  await log(c.env.DB,'hcot.plan.created',`Training plan #${result.meta.last_row_id}`,actor?.email || 'unknown')
+  return c.json({ok:true,id:result.meta.last_row_id},201)
+})
+api.patch('/hcot/plans/:id', async c => {
+  const id=Number(c.req.param('id'))
+  const b=await c.req.json<{title?:string;start_date?:string;end_date?:string;location?:string;provider?:string;notes?:string}>().catch(()=>({}))
+  if(!b.title?.trim())return c.json({error:'Training title is required.'},400)
+  const result=await c.env.DB.prepare(`UPDATE hcot_training_plans SET title=?,start_date=?,end_date=?,location=?,provider=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='draft'`)
+    .bind(b.title.trim(),b.start_date||null,b.end_date||null,b.location||null,b.provider||null,b.notes||null,id).run()
+  if(!result.meta.changes)return c.json({error:'Draft plan not found.'},404)
+  const actor = await verifyAccessJwt(c.req.raw, c.env)
+  await log(c.env.DB,'hcot.plan.updated',`Training plan #${id}`,actor!.email)
+  return c.json({ok:true})
+})
+api.get('/hcot/plans/:id/participants', async c => {
+  const rows=await c.env.DB.prepare(`SELECT st.id,st.full_name,st.email,st.team FROM hcot_participants hp JOIN staff st ON st.id=hp.staff_id WHERE hp.plan_id=? ORDER BY st.full_name COLLATE NOCASE`).bind(Number(c.req.param('id'))).all()
+  return c.json({staff:rows.results||[]})
+})
+api.post('/hcot/plans/:id/participants', async c => {
+  const id=Number(c.req.param('id'))
+  const plan=await c.env.DB.prepare("SELECT id FROM hcot_training_plans WHERE id=? AND status='draft'").bind(id).first()
+  if(!plan)return c.json({error:'Draft plan not found.'},404)
+  const b=await c.req.json<{staff_ids?:number[]}>().catch(()=>({}))
+  if(!Array.isArray(b.staff_ids)||b.staff_ids.length>500)return c.json({error:'Provide up to 500 staff IDs.'},400)
+  let added=0
+  for(const staffId of new Set(b.staff_ids.map(Number).filter(Number.isInteger))){
+    const staff=await c.env.DB.prepare('SELECT id FROM staff WHERE id=?').bind(staffId).first()
+    if(!staff)continue
+    const r=await c.env.DB.prepare('INSERT OR IGNORE INTO hcot_participants (plan_id,staff_id) VALUES (?,?)').bind(id,staffId).run()
+    added+=r.meta.changes||0
+  }
+  return c.json({ok:true,added})
+})
+
+/* HCOT catalogue and planning records. No private HCOT archive data is seeded. */
+api.get('/hcot/competencies', async c => {
+  const rows=await c.env.DB.prepare('SELECT * FROM hcot_competencies ORDER BY name COLLATE NOCASE').all()
+  return c.json({competencies:rows.results||[]})
+})
+api.post('/hcot/competencies', async c => {
+  const b=await c.req.json<{name?:string;category?:string;division?:string;unit?:string;description?:string}>().catch(()=>({}))
+  if(!b.name?.trim()||b.name.length>200)return c.json({error:'Enter a competency name (up to 200 characters).'},400)
+  if(!['core','functional'].includes(b.category||'core'))return c.json({error:'Invalid competency category.'},400)
+  const result=await c.env.DB.prepare('INSERT INTO hcot_competencies (name,category,division,unit,description) VALUES (?,?,?,?,?)')
+    .bind(b.name.trim(),b.category||'core',b.division?.trim()||null,b.unit?.trim()||null,b.description?.trim()||null).run()
+  return c.json({ok:true,id:result.meta.last_row_id},201)
+})
+api.get('/hcot/goals', async c => {
+  const rows=await c.env.DB.prepare('SELECT * FROM hcot_goals ORDER BY id DESC').all()
+  return c.json({goals:rows.results||[]})
+})
+api.post('/hcot/goals', async c => {
+  const b=await c.req.json<{title?:string;scope?:string;owner_label?:string;target_date?:string;measure?:string;target_value?:string}>().catch(()=>({}))
+  if(!b.title?.trim()||b.title.length>250)return c.json({error:'Enter a goal title (up to 250 characters).'},400)
+  if(!['unit','individual'].includes(b.scope||'unit'))return c.json({error:'Invalid goal scope.'},400)
+  const result=await c.env.DB.prepare('INSERT INTO hcot_goals (title,scope,owner_label,target_date,measure,target_value) VALUES (?,?,?,?,?,?)')
+    .bind(b.title.trim(),b.scope||'unit',b.owner_label?.trim()||null,b.target_date||null,b.measure?.trim()||null,b.target_value?.trim()||null).run()
+  return c.json({ok:true,id:result.meta.last_row_id},201)
+})
+api.get('/hcot/calendar', async c => {
+  const year=(c.req.query('year')||String(new Date().getUTCFullYear())).trim()
+  if(!/^\d{4}$/.test(year))return c.json({error:'Invalid year.'},400)
+  const rows=await c.env.DB.prepare(`SELECT p.*, (SELECT COUNT(*) FROM hcot_participants h WHERE h.plan_id=p.id) AS participants
+    FROM hcot_training_plans p WHERE substr(p.start_date,1,4)=? ORDER BY p.start_date,p.title`).bind(year).all()
+  return c.json({plans:rows.results||[],year})
+})
+api.get('/hcot/reviews', async c => {
+  const planId=Number(c.req.query('plan_id'))
+  if(!Number.isInteger(planId)||planId<=0)return c.json({error:'Select a training plan.'},400)
+  const rows=await c.env.DB.prepare(`SELECT hp.plan_id,hp.staff_id,st.full_name,st.email,
+    hr.status,hr.rating,hr.notes,hr.reviewed_at
+    FROM hcot_participants hp JOIN staff st ON st.id=hp.staff_id
+    LEFT JOIN hcot_reviews hr ON hr.plan_id=hp.plan_id AND hr.staff_id=hp.staff_id
+    WHERE hp.plan_id=? ORDER BY st.full_name COLLATE NOCASE`).bind(planId).all()
+  return c.json({reviews:rows.results||[]})
+})
+/* Reviews remain read-only until verified supervisor identity and permissions are implemented. */
+
+/* Read-only handshake: compare HCOT draft plans with tracker programmes and
+   participant assignments. No records are modified by this endpoint. */
+api.get('/hcot/identity-audit', async c => {
+  const linked = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM hcot_staff_links').first<{n:number}>()
+  const participants = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM hcot_participants').first<{n:number}>()
+  const inactive = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM hcot_participants p JOIN staff s ON s.id=p.staff_id WHERE s.active=0').first<{n:number}>()
+  const missing = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM hcot_participants p LEFT JOIN staff s ON s.id=p.staff_id WHERE s.id IS NULL').first<{n:number}>()
+  return c.json({verified_links:linked?.n||0,participant_records:participants?.n||0,inactive_participants:inactive?.n||0,missing_staff:missing?.n||0,read_only:true})
+})
+
+/* Staff mapping readiness is diagnostic only; no staff IDs or PII leave this endpoint. */
+api.get('/hcot/mapping-readiness', async c => {
+  const rows = await c.env.DB.prepare(`SELECT
+    (SELECT COUNT(*) FROM staff WHERE active=1) AS active_staff,
+    (SELECT COUNT(*) FROM hcot_staff_links l JOIN staff s ON s.id=l.tracker_staff_id WHERE s.active=1) AS active_verified_links,
+    (SELECT COUNT(*) FROM hcot_staff_links l LEFT JOIN staff s ON s.id=l.tracker_staff_id WHERE s.id IS NULL) AS orphan_links,
+    (SELECT COUNT(*) FROM hcot_staff_links l JOIN staff s ON s.id=l.tracker_staff_id WHERE s.active=0) AS inactive_links,
+    (SELECT COUNT(DISTINCT p.staff_id) FROM hcot_participants p LEFT JOIN hcot_staff_links l ON l.tracker_staff_id=p.staff_id WHERE l.tracker_staff_id IS NULL) AS unlinked_participants,
+    (SELECT COUNT(*) FROM hcot_participants p JOIN staff s ON s.id=p.staff_id WHERE s.active=0) AS inactive_participant_assignments`).first<{active_staff:number;active_verified_links:number;orphan_links:number;inactive_links:number;unlinked_participants:number;inactive_participant_assignments:number}>()
+  const summary=rows||{active_staff:0,active_verified_links:0,orphan_links:0,inactive_links:0,unlinked_participants:0,inactive_participant_assignments:0}
+  return c.json({read_only:true,summary,ready_for_automatic_sync:false,
+    reasons:['Staff identity links require independent verification','Role-based authorization and approval controls are not implemented']})
+})
+
+/* Plan-level identity exceptions; read-only, no employee names or emails. */
+api.get('/hcot/mapping-exceptions', async c => {
+  const rows=await c.env.DB.prepare(`SELECT p.id AS plan_id,p.title AS training_title,
+    COUNT(hp.staff_id) AS participants,
+    SUM(CASE WHEN hp.staff_id IS NOT NULL AND l.tracker_staff_id IS NULL THEN 1 ELSE 0 END) AS unverified,
+    SUM(CASE WHEN hp.staff_id IS NOT NULL AND s.id IS NULL THEN 1 ELSE 0 END) AS missing,
+    SUM(CASE WHEN hp.staff_id IS NOT NULL AND s.active=0 THEN 1 ELSE 0 END) AS inactive
+    FROM hcot_training_plans p
+    LEFT JOIN hcot_participants hp ON hp.plan_id=p.id
+    LEFT JOIN staff s ON s.id=hp.staff_id
+    LEFT JOIN hcot_staff_links l ON l.tracker_staff_id=hp.staff_id
+    GROUP BY p.id,p.title ORDER BY p.id DESC`).all()
+  return c.json({read_only:true,plans:(rows.results||[]).map(r=>({
+    plan_id:r.plan_id,training_title:r.training_title,participants:Number(r.participants)||0,
+    unverified:Number(r.unverified)||0,missing:Number(r.missing)||0,inactive:Number(r.inactive)||0
+  }))})
+})
+
+/* Validate a proposed identity link without creating or changing records.
+   Fail closed when the shared access gate is not configured. */
+api.post('/hcot/mapping-validate', async c => {
+  if (!(await getSetting(c.env.DB,'access_code'))) return c.json({error:'Access control must be configured before mapping review.'},403)
+  const body=await c.req.json<{hcot_staff_number?:string;tracker_staff_id?:number}>().catch(()=>({}))
+  const number=typeof body.hcot_staff_number==='string'?body.hcot_staff_number.trim():''
+  const staffId=Number(body.tracker_staff_id)
+  if(!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$/.test(number)||!Number.isSafeInteger(staffId)||staffId<=0)
+    return c.json({error:'Provide a valid HCOT staff number and positive tracker staff ID.'},400)
+  const staff=await c.env.DB.prepare('SELECT id,active FROM staff WHERE id=?').bind(staffId).first<{id:number;active:number}>()
+  const byNumber=await c.env.DB.prepare('SELECT tracker_staff_id FROM hcot_staff_links WHERE hcot_staff_number=?').bind(number).first<{tracker_staff_id:number}>()
+  const byStaff=await c.env.DB.prepare('SELECT hcot_staff_number FROM hcot_staff_links WHERE tracker_staff_id=?').bind(staffId).first<{hcot_staff_number:string}>()
+  const issues:string[]=[]
+  if(!staff)issues.push('staff_not_found')
+  else if(Number(staff.active)!==1)issues.push('staff_inactive')
+  if(byNumber&&byNumber.tracker_staff_id!==staffId)issues.push('staff_number_already_linked')
+  if(byStaff&&byStaff.hcot_staff_number!==number)issues.push('tracker_staff_already_linked')
+  return c.json({read_only:true,eligible_for_review:issues.length===0,already_linked:byNumber?.tracker_staff_id===staffId,
+    issues,approval_required:true,link_created:false})
+})
+
+/* Explicitly approved identity links require a separate server-side administrator token.
+   Never use the general tracker access code for this privileged operation. */
+/* Security policy preview: no user-supplied identity can authorize a review.
+   The actual write endpoints stay disabled until a trusted identity provider is integrated. */
+/* Preview maker/checker eligibility without trusting a browser-provided role.
+   This endpoint never authorizes or performs a mapping write. */
+api.get('/hcot/mapping-requests', async c => {
+  const rows=await c.env.DB.prepare(
+    "SELECT id,status,created_at,reviewed_at FROM hcot_mapping_requests ORDER BY id DESC LIMIT 100"
+  ).all()
+  return c.json({read_only:true,requests:rows.results||[],approvals_enabled:false})
+})
+
+api.get('/hcot/access-session', async c => {
+  const identity = await verifyAccessJwt(c.req.raw, c.env)
+  if (!identity) return c.json({ error: 'Cloudflare Access authentication required.' }, 401)
+  return c.json({
+    authenticated: true,
+    email: identity.email,
+    role: (c.env.HCOT_SETTINGS_ADMIN_EMAILS || '').split(',').map(email => email.trim().toLowerCase()).includes(identity.email.trim().toLowerCase()) ? 'admin' : 'viewer',
+    role_source: 'verified_access_identity_and_admin_allowlist',
+    maker_enabled: false,
+    checker_enabled: false,
+    mapping_approval_enabled: false,
+    automatic_sync_enabled: false
+  })
+})
+
+api.get('/hcot/mapping-security', async c => {
+  return c.json({
+    approval_enabled:false,
+    request_submission_enabled:false,
+    identity_provider_configured:false,
+    independent_checker_required:true,
+    automatic_sync_enabled:false,
+    reason:'Named identity and reviewer role must be verified server-side before approval writes.'
+  })
+})
+
+api.get('/hcot/mapping-approval-status', async c => {
+  const rows=await c.env.DB.prepare("SELECT status,COUNT(*) AS total FROM hcot_mapping_requests GROUP BY status").all<{status:string;total:number}>()
+  const counts={pending:0,approved:0,rejected:0}
+  for(const r of rows.results||[])if(r.status in counts)counts[r.status as keyof typeof counts]=Number(r.total)||0
+  return c.json({read_only:true,approval_enabled:false,named_authentication:false,maker_checker_enabled:false,counts})
+})
+
+api.post('/hcot/mapping-approve', async c => {
+  return c.json({error:'Approval unavailable: named maker/checker authentication and independent review are required.'},403)
+})
+
+api.get('/hcot/handshake-preview', async c => {
+  const periodId=Number(c.req.query('period')) || (await defaultPeriod(c.env.DB))?.id || 0
+  if(!Number.isInteger(periodId)||periodId<=0)return c.json({error:'Select a valid reporting period.'},400)
+  const period=await c.env.DB.prepare('SELECT id,name FROM periods WHERE id=?').bind(periodId).first()
+  if(!period)return c.json({error:'Reporting period not found.'},404)
+  const plans=await c.env.DB.prepare('SELECT id,title,status FROM hcot_training_plans ORDER BY id DESC').all<{id:number;title:string;status:string}>()
+  const programmes=await c.env.DB.prepare('SELECT id,name FROM programmes').all<{id:number;name:string}>()
+  const assignments=await c.env.DB.prepare('SELECT programme_id,staff_id FROM programme_assignments WHERE period_id=?').bind(periodId).all<{programme_id:number;staff_id:number}>()
+  const participants=await c.env.DB.prepare('SELECT plan_id,staff_id FROM hcot_participants').all<{plan_id:number;staff_id:number}>()
+  const preview=previewHandshake(plans.results||[],programmes.results||[],participants.results||[],assignments.results||[])
+  return c.json({period_id:periodId,...preview})
+})
+
+api.get('/hcot/cost-estimates', async c => {
+  const rows=await c.env.DB.prepare(`SELECT ce.id,ce.plan_id,ce.staff_id,ce.currency,
+    ce.allowance_amount,ce.transport_amount,ce.accommodation_amount,
+    ce.course_fee_amount,ce.total_amount,ce.rate_basis,ce.status,
+    p.title AS training_title,st.full_name AS staff_name
+    FROM hcot_cost_estimates ce
+    JOIN hcot_training_plans p ON p.id=ce.plan_id
+    JOIN staff st ON st.id=ce.staff_id ORDER BY ce.id DESC`).all()
+  return c.json({estimates:rows.results||[]})
+})
 /* ---------------- staff training history ---------------- */
 api.get('/training-history', async (c) => {
   const db = c.env.DB
@@ -513,11 +880,12 @@ api.get('/training-history', async (c) => {
   const staff = await db.prepare('SELECT id, full_name, email, team FROM staff ORDER BY full_name COLLATE NOCASE').all()
   const records = rows.results ?? []
   const distinctStaff = new Set(records.map((r: any) => r.staff_id)).size
+  const distinctProgrammes = new Set(records.map((r: any) => String(r.training_programme ?? '').trim().replace(/\s+/g, ' ').toLowerCase()).filter(Boolean)).size
   return c.json({
     records,
     staff: staff.results ?? [],
     years: (years.results ?? []).map((r) => r.year).filter(Boolean),
-    summary: { submissions: records.length, staff: distinctStaff, programmes: records.length },
+    summary: { submissions: records.length, staff: distinctStaff, programmes: distinctProgrammes },
   })
 })
 
@@ -605,17 +973,25 @@ api.post('/unmatched/:id/ignore', async (c) => {
 
 /* ---------------- webhook ingest ---------------- */
 api.post('/ingest/:token', async (c) => {
+  // Bound webhook payload bytes before D1 access or JSON parsing.
+  const maxBytes = 256 * 1024
+  const declaredLength = Number(c.req.header('content-length') || 0)
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) return c.json({ error: 'Webhook payload too large.', code: 'INGEST_PAYLOAD_LIMIT' }, 413)
+  const rawBody = await c.req.raw.text()
+  if (new TextEncoder().encode(rawBody).byteLength > maxBytes) return c.json({ error: 'Webhook payload too large.', code: 'INGEST_PAYLOAD_LIMIT' }, 413)
   const period = await periodByToken(c.env.DB, c.req.param('token'))
   if (!period) return c.json({ error: 'Unknown webhook token.' }, 404)
 
   let body: unknown
   try {
-    body = await c.req.json()
+    body = JSON.parse(rawBody)
   } catch {
     return c.json({ error: 'Body must be JSON.' }, 400)
   }
 
+  // Reject oversized batches before processing any records to avoid partial ingestion.
   const list = Array.isArray(body) ? body : [body]
+  if (list.length > 100) return c.json({ error: 'Maximum 100 responses per webhook request.', code: 'INGEST_BATCH_LIMIT' }, 413)
   const results = []
   for (const item of list) {
     const rec = extractRecord(item)
@@ -703,6 +1079,7 @@ async function runImport(
     name: override.name ?? detected.name,
     time: override.time ?? detected.time,
     id: override.id ?? detected.id,
+    programme: override.programme ?? detected.programme,
   }
 
   const report: ImportReport = {
@@ -855,13 +1232,32 @@ api.get('/activity', async (c) => {
 api.get('/settings', async (c) => {
   const rows = await c.env.DB.prepare('SELECT key, value FROM settings').all<{ key: string; value: string }>()
   const out: Record<string, string> = {}
-  for (const r of rows.results ?? []) out[r.key] = r.value
+  // Never disclose the actual shared tracker access code to browser clients.
+  // The UI only needs to know whether a code has been configured.
+  for (const r of rows.results ?? []) out[r.key] = r.key === 'access_code' ? (r.value ? 'configured' : '') : r.value
   return c.json({ settings: out })
 })
 
 api.post('/settings', async (c) => {
-  const body = await c.req.json<Record<string, string>>()
+  // Fail closed for HCOT-enabled Preview, including first-time setup when
+  // the tracker access code has not yet been initialized in D1.
+  if (c.env.HCOT_ACCESS_TEAM_DOMAIN || c.env.HCOT_ACCESS_AUD) {
+    if (!c.env.HCOT_ACCESS_TEAM_DOMAIN?.trim() || !c.env.HCOT_ACCESS_AUD?.trim()) {
+      return c.json({ error: 'HCOT Access configuration incomplete.' }, 503)
+    }
+    const admins = (c.env.HCOT_SETTINGS_ADMIN_EMAILS || '').split(',')
+      .map(email => email.trim().toLowerCase()).filter(Boolean)
+    if (!admins.length) return c.json({ error: 'Preview settings administrators are not configured.' }, 503)
+    const identity = await verifyAccessJwt(c.req.raw, c.env)
+    if (!identity) return c.json({ error: 'Cloudflare Access authentication required.' }, 401)
+    if (!admins.includes(identity.email.trim().toLowerCase())) return c.json({ error: 'Settings administrator permission required.' }, 403)
+  }
+  const body = await c.req.json<Record<string, string>>().catch(() => ({} as Record<string, string>))
   const allowed = ['org_name', 'access_code', 'deadline_reminder_days', 'form_owner_email']
+  // Never permit an empty access code to silently unlock an initialized tracker.
+  if (Object.prototype.hasOwnProperty.call(body, 'access_code') && !String(body.access_code ?? '').trim()) {
+    return c.json({ error: 'Access code cannot be empty. Use a separately approved recovery process.', code: 'ACCESS_CODE_REQUIRED' }, 400)
+  }
   for (const [k, v] of Object.entries(body)) {
     if (!allowed.includes(k)) continue
     await setSetting(c.env.DB, k, String(v ?? ''))
@@ -871,22 +1267,11 @@ api.post('/settings', async (c) => {
 })
 
 /** Wipe the sample data so a real rollout starts clean. */
-api.post('/reset', async (c) => {
-  const { confirm } = await c.req.json<{ confirm?: string }>().catch(() => ({ confirm: '' }))
-  if (confirm !== 'DELETE') {
-    return c.json({ error: 'Type DELETE to confirm.' }, 400)
-  }
-  const db = c.env.DB
-  await db.prepare('DELETE FROM submissions').run()
-  await db.prepare('DELETE FROM unmatched').run()
-  await db.prepare('DELETE FROM staff').run()
-  await db.prepare('DELETE FROM periods').run()
-  await db.prepare('DELETE FROM activity').run()
-  await db.prepare("UPDATE settings SET value = '1' WHERE key = 'seeded'").run()
-  await setSetting(db, 'seeded', '1')
-  await log(db, 'workspace.reset', 'All records cleared for a real rollout', 'admin')
-  return c.json({ ok: true })
-})
+/* P0: destructive reset is disabled; use a separately approved maintenance process. */
+api.post('/reset', async c => c.json({
+  error: 'Workspace reset is disabled for security. Use a separately approved maintenance process.',
+  code: 'WORKSPACE_RESET_DISABLED'
+}, 403))
 
 api.get('/demo-status', async (c) => {
   const demo = await getSetting(c.env.DB, 'demo', '')

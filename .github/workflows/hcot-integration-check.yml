@@ -1,0 +1,50 @@
+name: HCOT integration validation
+on:
+  push:
+    branches:
+      - feature/hcot-unified-integration
+      - fix/hcot-preview-secure-access-bootstrap
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build Cloudflare application
+        run: npm run build
+      - name: Check browser JavaScript syntax
+        run: node --check public/static/app.js
+      - name: Multiple-submission regression tests
+        run: node --experimental-strip-types --test tests/multiple-submissions.test.mjs
+      - name: Microsoft Forms ingestion regression tests
+        run: node --experimental-strip-types --test tests/forms-ingestion.test.mjs
+      - name: HCOT settings bootstrap security regression tests
+        run: node --test tests/hcot-settings-bootstrap.test.mjs
+      - name: HCOT Access authentication regression tests
+        run: node --experimental-strip-types --test tests/hcot-access.test.mjs
+      - name: HCOT read-only integration regression tests
+        run: node --experimental-strip-types --test tests/hcot-integration-regression.test.mjs
+      - name: HCOT read-only safety guard tests
+        run: node --test tests/hcot-readonly-guards.test.mjs
+      - name: Training history summary regression tests
+        run: node --test tests/training-history-summary.test.mjs
+      - name: Programme reporting regression tests
+        run: node --test tests/programme-reporting.test.mjs
+      - name: Outstanding programme reports regression tests
+        run: node --test tests/outstanding-programme-reports.test.mjs
+      - name: Outstanding dashboard regression tests
+        run: node --test tests/outstanding-dashboard.test.mjs
+      - name: HCOT handshake regression tests
+        run: node --experimental-strip-types --test tests/hcot-handshake.test.mjs
