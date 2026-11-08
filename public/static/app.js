@@ -878,7 +878,7 @@ async function renderProgrammes(el) {
     $('#pg-rename-save').onclick=async()=>{try{await api('/programmes/'+$('#pg-rename-id').value,{method:'PATCH',body:JSON.stringify({name:$('#pg-rename-name').value})});toast('Programme name updated');renderProgrammes(el)}catch(e){toast(e.message,true)}}
   }
   $('#pg-tab-import').click()
-  $('#pg-staff-search').oninput=e=>{const q=e.target.value.trim().toLowerCase();$('.pg-staff').forEach(x=>{const row=x.closest('label');row.style.display=row.textContent.toLowerCase().includes(q)?'block':'none'})}
+  $('#pg-staff-search').oninput=e=>{const q=e.target.value.trim().toLowerCase();$$('.pg-staff').forEach(x=>{const row=x.closest('label');row.style.display=row.textContent.toLowerCase().includes(q)?'block':'none'})}
   $('#pg-add').onclick=async()=>{try{await api('/programmes',{method:'POST',body:JSON.stringify({name:$('#pg-name').value.trim()})});toast('Programme created');renderProgrammes(el)}catch(e){toast(e.message,true)}}
   $('#pg-assign').onclick=async()=>{const programme_id=Number($('#pg-choice').value),staff_ids=Array.from(document.querySelectorAll('.pg-staff')).filter(x=>x.checked).map(x=>Number(x.value));try{const r=await api('/programme-assignments',{method:'POST',body:JSON.stringify({programme_id,staff_ids,period_id:period})});toast(r.added+' staff assignments added');renderProgrammes(el)}catch(e){toast(e.message,true)}}
   document.querySelectorAll('.pg-view').forEach(b=>b.onclick=async()=>{const data=await api('/programme-progress?period='+period+'&programme_id='+b.dataset.id);$('#pg-detail').innerHTML='<div class="card"><div class="card-head"><h3>Assigned staff: '+data.assigned+' · Submitted: '+data.submitted+' · Outstanding: '+data.pending+'</h3></div><div class="table-wrap"><table><thead><tr><th>Staff</th><th>Email</th><th>Status</th><th></th></tr></thead><tbody>'+data.rows.map(x=>'<tr><td>'+esc(x.full_name)+'</td><td>'+esc(x.email)+'</td><td>'+(x.submitted_at?'Submitted':'Outstanding')+'</td><td><button class="btn btn-sm pg-remove" data-id="'+x.id+'">Unassign</button></td></tr>').join('')+'</tbody></table></div></div>';document.querySelectorAll('.pg-remove').forEach(x=>x.onclick=async()=>{if(!confirm('Remove assignment? Existing submissions will be kept.'))return;await api('/programme-assignments/'+x.dataset.id,{method:'DELETE'});renderProgrammes(el)})})
@@ -973,7 +973,7 @@ async function renderHCOT(el) {
       try{await api('/hcot/plans/'+plan.id,{method:'PATCH',body:JSON.stringify(payload)});toast('Draft training plan updated');renderHCOT(el)}catch(e){toast(e.message,true)}
     }
   })
-  $('.hcot-manage').forEach(btn=>btn.onclick=async()=>{
+  $$('.hcot-manage').forEach(btn=>btn.onclick=async()=>{
     const id=Number(btn.dataset.id),participants=await api('/hcot/plans/'+id+'/participants')
     const selected=new Set((participants.staff||[]).map(x=>x.id))
     $('#hcot-participants').innerHTML='<div class="card"><div class="card-head"><h3>Participants — '+esc(plans.find(p=>p.id===id)?.title||'')+'</h3></div><div class="card-body"><label class="field"><span>Search staff</span><input id="hcot-search" type="search" placeholder="Name or email"></label><div style="max-height:230px;overflow:auto">'+staff.map(x=>'<label class="hcot-staff-row" style="display:block;padding:5px"><input type="checkbox" class="hcot-staff" value="'+x.id+'" '+(selected.has(x.id)?'checked disabled':'')+'> '+esc(x.full_name)+' — '+esc(x.email)+'</label>').join('')+'</div><button class="btn btn-primary mt-12" id="hcot-add">Add selected participants</button></div></div>'
