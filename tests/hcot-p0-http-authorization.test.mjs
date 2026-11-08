@@ -32,6 +32,7 @@ function fakeDb() {
         async first() {
           queries.push({ sql, args: this.args, op: 'first' })
           if (sql.includes("key = 'seeded'")) return { value: '1' }
+          if (sql.includes('SELECT * FROM periods WHERE webhook_token = ?')) return { id: 1, webhook_token: 'test-webhook-token' }
           if (sql.includes('SELECT COUNT(*) AS n FROM periods')) return { n: 1 }
           if (sql.includes('PRAGMA table_info(submissions)'))
             return null
@@ -202,4 +203,27 @@ test('runtime: verified administrator email is matched case-insensitively for wr
   const session = await call(db, baseEnv, 'GET', '/hcot/access-session', token)
   assert.equal(session.status, 200)
   assert.equal((await session.json()).role, 'admin')
+})
+
+test('runtime: uppercase verified admin can update settings under HCOT Access', async t => {
+  const { sign, publicKey } = await signedFixture()
+  globalThis.fetch = async () => new Response(JSON.stringify({ keys: [publicKey] }), { status: 200 })
+  t.after(() => { globalThis.fetch = originalFetch })
+  const { db } = fakeDb()
+  const response = await call(db, baseEnv, 'POST', '/settings',
+    await sign('ADMIN@EXAMPLE.INVALID'), { org_name: 'Test organization' })
+  assert.equal(response.status, 200)
+})
+
+test('runtime: Forms webhook rejects oversized batches before recording responses', async () => {
+  const { db, queries } = fakeDb()
+  const batch = Array.from({ length: 101 }, (_, i) => ({
+    email: 'staff@example.invalid', trainingProgramme: 'Course ' + i,
+  }))
+  const response = await api.request('https://example.invalid/ingest/test-webhook-token', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(batch),
+  }, { DB: db })
+  assert.equal(response.status, 413)
+  assert.equal((await response.json()).code, 'INGEST_BATCH_LIMIT')
+  assert.ok(!queries.some(q => /INSERT INTO (?:submissions|unmatched)/i.test(q.sql)))
 })
