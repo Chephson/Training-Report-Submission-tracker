@@ -83,7 +83,7 @@ function readCookie(cookieHeader: string, name: string): string | null {
 
 api.use('/*', async (c, next) => {
   const path = c.req.path.replace('/api', '')
-  if (PUBLIC_PATHS.some((p) => path.startsWith(p))) return next()
+  if (path === '/login' || path === '/session' || path.startsWith('/ingest/')) return next()
 
   if (path === '/hcot' || path.startsWith('/hcot/')) {
     if (!c.env.HCOT_ACCESS_TEAM_DOMAIN?.trim() || !c.env.HCOT_ACCESS_AUD?.trim()) {
@@ -991,12 +991,18 @@ api.post('/unmatched/:id/ignore', async (c) => {
 
 /* ---------------- webhook ingest ---------------- */
 api.post('/ingest/:token', async (c) => {
+  // Bound webhook payload bytes before D1 access or JSON parsing.
+  const maxBytes = 256 * 1024
+  const declaredLength = Number(c.req.header('content-length') || 0)
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) return c.json({ error: 'Webhook payload too large.', code: 'INGEST_PAYLOAD_LIMIT' }, 413)
+  const rawBody = await c.req.raw.text()
+  if (new TextEncoder().encode(rawBody).byteLength > maxBytes) return c.json({ error: 'Webhook payload too large.', code: 'INGEST_PAYLOAD_LIMIT' }, 413)
   const period = await periodByToken(c.env.DB, c.req.param('token'))
   if (!period) return c.json({ error: 'Unknown webhook token.' }, 404)
 
   let body: unknown
   try {
-    body = await c.req.json()
+    body = JSON.parse(rawBody)
   } catch {
     return c.json({ error: 'Body must be JSON.' }, 400)
   }
@@ -1266,6 +1272,10 @@ api.post('/settings', async (c) => {
   }
   const body = await c.req.json<Record<string, string>>().catch(() => ({} as Record<string, string>))
   const allowed = ['org_name', 'access_code', 'deadline_reminder_days', 'form_owner_email']
+  // Never permit an empty access code to silently unlock an initialized tracker.
+  if (Object.prototype.hasOwnProperty.call(body, 'access_code') && !String(body.access_code ?? '').trim()) {
+    return c.json({ error: 'Access code cannot be empty. Use a separately approved recovery process.', code: 'ACCESS_CODE_REQUIRED' }, 400)
+  }
   for (const [k, v] of Object.entries(body)) {
     if (!allowed.includes(k)) continue
     await setSetting(c.env.DB, k, String(v ?? ''))
