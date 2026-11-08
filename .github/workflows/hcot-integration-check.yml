@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - feature/hcot-unified-integration
+      - fix/hcot-preview-secure-access-bootstrap
   pull_request:
     branches:
       - main
@@ -29,6 +30,8 @@ jobs:
         run: node --experimental-strip-types --test tests/multiple-submissions.test.mjs
       - name: Microsoft Forms ingestion regression tests
         run: node --experimental-strip-types --test tests/forms-ingestion.test.mjs
+      - name: HCOT settings bootstrap security regression tests
+        run: node --test tests/hcot-settings-bootstrap.test.mjs
       - name: HCOT Access authentication regression tests
         run: node --experimental-strip-types --test tests/hcot-access.test.mjs
       - name: HCOT read-only integration regression tests
