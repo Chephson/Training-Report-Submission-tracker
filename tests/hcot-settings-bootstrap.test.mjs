@@ -11,7 +11,7 @@ const settingsRead = api.slice(api.indexOf("api.get('/settings'"), api.indexOf("
 test('settings writes require a verified Cloudflare Access administrator on HCOT Preview', () => {
   assert.match(settingsWrite, /HCOT_SETTINGS_ADMIN_EMAILS/)
   assert.match(settingsWrite, /verifyAccessJwt\(c\.req\.raw, c\.env\)/)
-  assert.match(settingsWrite, /admins\.includes\(identity\.email\)/)
+  assert.match(settingsWrite, /admins\.includes\(identity\.email\.trim\(\)\.toLowerCase\(\)\)/)
   assert.match(settingsWrite, /Settings administrator permission required/)
   assert.match(settingsWrite, /Preview settings administrators are not configured/)
 })
