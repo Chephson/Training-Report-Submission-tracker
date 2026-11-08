@@ -11,7 +11,6 @@ test('draft plan updates require verified administrator authorization', () => {
   assert.match(auth, /isHcotViewerRead\(method, path\)/)
   assert.match(auth, /if \(viewerRead\) return next\(\)/)
   assert.match(auth, /admins\.includes\(identity\.email\.trim\(\)\.toLowerCase\(\)\)/)
-  assert.match(auth, /admins\.includes\(identity\.email\.trim\(\)\.toLowerCase\(\)\)/)
   assert.match(auth, /permission required\.' }, 403/)
 })
 test('only draft plans can be updated; failed updates do not emit audit events', () => {
@@ -47,4 +46,11 @@ test('read-only HCOT viewer workspace never fetches the staff roster or renders 
   assert.match(viewer, /return\s*\n\s*}/)
   assert.match(ui, /const session=await api\('\/hcot\/access-session'\)/)
   assert.match(ui, /const isAdmin=session\.role==='admin'/)
+})
+
+test('viewer competency library hides creation controls', () => {
+  const section = ui.slice(ui.indexOf("}else if(section==='competencies'){"),ui.indexOf("}else if(section==='goals'){"))
+  assert.match(section, /const isAdmin=\(await api\('\/hcot\/access-session'\)\)\.role==='admin'/)
+  assert.match(section, /\(isAdmin\?/)
+  assert.match(section, /if\(isAdmin\)\$\('#hcot-comp-add'\)/)
 })
