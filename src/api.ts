@@ -189,7 +189,7 @@ api.use('/hcot/*', async (c, next) => {
   if (!admins.length) return c.json({ error: 'HCOT administrator authorization is not configured.' }, 503)
   const identity = await verifyAccessJwt(c.req.raw, c.env)
   if (!identity) return c.json({ error: 'Verified Cloudflare Access identity required.' }, 401)
-  if (!admins.includes(identity.email)) return c.json({ error: 'HCOT administrator permission required.' }, 403)
+  if (!admins.includes(identity.email.trim().toLowerCase())) return c.json({ error: 'HCOT administrator permission required.' }, 403)
   await next()
 })
 
@@ -653,7 +653,7 @@ api.post('/hcot/plans', async c => {
     (title,start_date,end_date,location,provider,notes) VALUES (?,?,?,?,?,?)`)
     .bind(title,body.start_date||null,body.end_date||null,body.location?.trim()||null,body.provider?.trim()||null,body.notes?.trim()||null).run()
   const actor = await verifyAccessJwt(c.req.raw, c.env)
-   await log(c.env.DB,'hcot.plan.created',`Training plan #${result.meta.last_row_id}`,actor?.email || 'unknown')
+  await log(c.env.DB,'hcot.plan.created',`Training plan #${result.meta.last_row_id}`,actor?.email || 'unknown')
   return c.json({ok:true,id:result.meta.last_row_id},201)
 })
 api.patch('/hcot/plans/:id', async c => {
@@ -811,7 +811,7 @@ api.get('/hcot/access-session', async c => {
   return c.json({
     authenticated: true,
     email: identity.email,
-    role: (c.env.HCOT_SETTINGS_ADMIN_EMAILS || '').split(',').map(email => email.trim().toLowerCase()).includes(identity.email.toLowerCase()) ? 'admin' : 'viewer',
+    role: (c.env.HCOT_SETTINGS_ADMIN_EMAILS || '').split(',').map(email => email.trim().toLowerCase()).includes(identity.email.trim().toLowerCase()) ? 'admin' : 'viewer',
     role_source: 'verified_access_identity_and_admin_allowlist',
     maker_enabled: false,
     checker_enabled: false,
