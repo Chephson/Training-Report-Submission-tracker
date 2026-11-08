@@ -13,7 +13,7 @@ test('HCOT write authorization is enforced by a server-side Access identity and 
   assert.match(guard, /api\.use\('\/hcot\/\*'/)
   assert.match(guard, /verifyAccessJwt\(c\.req\.raw, c\.env\)/)
   assert.match(guard, /HCOT_SETTINGS_ADMIN_EMAILS/)
-  assert.match(guard, /admins\.includes\(identity\.email\)/)
+  assert.match(guard, /admins\.includes\(identity\.email\.trim\(\)\.toLowerCase\(\)\)/)
   assert.match(guard, /permission required\.' }, 403/)
   assert.match(guard, /not configured\.' }, 503/)
   for (const [path, method] of routes) {
