@@ -66,6 +66,8 @@ const protectedWrites = [
 const sensitiveReads = [
   '/hcot/plans/1/participants', '/hcot/reviews?plan_id=1', '/hcot/cost-estimates',
   '/hcot/goals', '/hcot/mapping-requests', '/hcot/handshake-preview?period=1',
+  '/hcot/plans', '/hcot/competencies', '/hcot/calendar', '/hcot/identity-audit',
+  '/hcot/mapping-readiness', '/hcot/mapping-exceptions', '/hcot/mapping-approval-status',
 ]
 function call(db, env, method, path, token, body) {
   return api.request('https://example.invalid' + path, {
@@ -160,6 +162,24 @@ test('runtime: verified administrator can create a synthetic HCOT plan', async t
     await sign('admin@example.invalid'), { title: 'Synthetic plan' })
   assert.equal(response.status, 201)
   assert.ok(hcotWrites(queries).some(q => /INSERT INTO hcot_training_plans/.test(q.sql)))
+})
+
+test('runtime: Access session identifies allowlisted admin without enabling maker/checker', async t => {
+  const { sign, publicKey } = await signedFixture()
+  globalThis.fetch = async () => new Response(JSON.stringify({ keys: [publicKey] }), { status: 200 })
+  t.after(() => { globalThis.fetch = originalFetch })
+  const { db } = fakeDb()
+  const admin = await call(db, baseEnv, 'GET', '/hcot/access-session', await sign('admin@example.invalid'))
+  assert.equal(admin.status, 200)
+  const adminSession = await admin.json()
+  assert.equal(adminSession.role, 'admin')
+  assert.equal(adminSession.maker_enabled, false)
+  assert.equal(adminSession.checker_enabled, false)
+  assert.equal(adminSession.mapping_approval_enabled, false)
+  assert.equal(adminSession.automatic_sync_enabled, false)
+  const viewer = await call(db, baseEnv, 'GET', '/hcot/access-session', await sign('viewer@example.invalid'))
+  assert.equal(viewer.status, 200)
+  assert.equal((await viewer.json()).role, 'viewer')
 })
 
 test('runtime: reset and mapping approval remain forbidden even with valid shared code', async () => {
