@@ -8,8 +8,9 @@ const update = api.slice(api.indexOf("api.patch('/hcot/plans/:id'"), api.indexOf
 const auth = api.slice(api.indexOf('/* P0: HCOT least-privilege'), api.indexOf('/* Schema migration runs after'))
 
 test('draft plan updates require verified administrator authorization', () => {
-  assert.match(auth, /method === 'PATCH'/)
-  assert.ok(auth.includes(String.raw`/^\/hcot\/plans\/[^/]+$/`), 'PATCH training-plan route must be administrator-protected')
+  assert.match(auth, /isHcotViewerRead\(method, path\)/)
+  assert.match(auth, /if \(viewerRead\) return next\(\)/)
+  assert.match(auth, /admins\.includes\(identity\.email\.trim\(\)\.toLowerCase\(\)\)/)
   assert.match(auth, /admins\.includes\(identity\.email\.trim\(\)\.toLowerCase\(\)\)/)
   assert.match(auth, /permission required\.' }, 403/)
 })
@@ -35,4 +36,15 @@ test('collection event handlers and staff filters never use the single-element s
   assert.match(ui, /\$\$\('\.hcot-manage'\)\.forEach/)
   assert.match(ui, /\$\$\('\.pg-staff'\)\.forEach/)
   assert.doesNotMatch(ui, /(?<!\$)\$\([^\n]*?\)\.forEach\(/, 'forEach must not be called on the single-element $ selector')
+})
+
+test('read-only HCOT viewer workspace never fetches the staff roster or renders edit actions', () => {
+  const viewer = ui.slice(ui.indexOf('  if(!isAdmin){', ui.indexOf('async function renderHCOT(el)')), ui.indexOf('  const [data,roster]=', ui.indexOf('async function renderHCOT(el)')))
+  assert.match(viewer, /api\('\/hcot\/plans'\)/)
+  assert.match(viewer, /data-section="calendar"/)
+  assert.match(viewer, /data-section="competencies"/)
+  assert.doesNotMatch(viewer, /api\('\/staff'\)|hcot-create|hcot-edit|hcot-manage|data-section="reviews"|data-section="identity"/)
+  assert.match(viewer, /return\s*\n\s*}/)
+  assert.match(ui, /const session=await api\('\/hcot\/access-session'\)/)
+  assert.match(ui, /const isAdmin=session\.role==='admin'/)
 })
