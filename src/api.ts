@@ -161,6 +161,13 @@ const HCOT_ADMIN_READ_PATHS = [
   /^\/hcot\/goals$/,
   /^\/hcot\/mapping-requests$/,
   /^\/hcot\/handshake-preview$/,
+  /^\/hcot\/plans$/,
+  /^\/hcot\/competencies$/,
+  /^\/hcot\/calendar$/,
+  /^\/hcot\/identity-audit$/,
+  /^\/hcot\/mapping-readiness$/,
+  /^\/hcot\/mapping-exceptions$/,
+  /^\/hcot\/mapping-approval-status$/,
 ]
 const HCOT_ADMIN_POST_PATHS = [
   /^\/hcot\/plans$/,
@@ -645,7 +652,8 @@ api.post('/hcot/plans', async c => {
   const result=await c.env.DB.prepare(`INSERT INTO hcot_training_plans
     (title,start_date,end_date,location,provider,notes) VALUES (?,?,?,?,?,?)`)
     .bind(title,body.start_date||null,body.end_date||null,body.location?.trim()||null,body.provider?.trim()||null,body.notes?.trim()||null).run()
-  await log(c.env.DB,'hcot.plan.created',`Training plan #${result.meta.last_row_id}`,'admin')
+  const actor = await verifyAccessJwt(c.req.raw, c.env)
+   await log(c.env.DB,'hcot.plan.created',`Training plan #${result.meta.last_row_id}`,actor?.email || 'unknown')
   return c.json({ok:true,id:result.meta.last_row_id},201)
 })
 api.patch('/hcot/plans/:id', async c => {
@@ -803,8 +811,8 @@ api.get('/hcot/access-session', async c => {
   return c.json({
     authenticated: true,
     email: identity.email,
-    role: 'viewer',
-    role_source: 'temporary_read_only_default',
+    role: (c.env.HCOT_SETTINGS_ADMIN_EMAILS || '').split(',').map(email => email.trim().toLowerCase()).includes(identity.email.toLowerCase()) ? 'admin' : 'viewer',
+    role_source: 'verified_access_identity_and_admin_allowlist',
     maker_enabled: false,
     checker_enabled: false,
     mapping_approval_enabled: false,
