@@ -152,6 +152,41 @@ api.get('/session', async (c) => {
   return c.json({ locked: !!code, org_name: await getSetting(c.env.DB, 'org_name', '') })
 })
 
+/* P0: HCOT least-privilege authorization. The shared tracker access code is NOT a role.
+   The signed Access identity is independently verified by the existing HCOT gate.
+   This middleware re-verifies it before granting a privileged operation. */
+const HCOT_ADMIN_READ_PATHS = [
+  /^\/hcot\/plans\/[^/]+\/participants$/,
+  /^\/hcot\/reviews$/,
+  /^\/hcot\/cost-estimates$/,
+  /^\/hcot\/goals$/,
+  /^\/hcot\/mapping-requests$/,
+  /^\/hcot\/handshake-preview$/,
+]
+const HCOT_ADMIN_POST_PATHS = [
+  /^\/hcot\/plans$/,
+  /^\/hcot\/plans\/[^/]+\/participants$/,
+  /^\/hcot\/competencies$/,
+  /^\/hcot\/goals$/,
+  /^\/hcot\/mapping-validate$/,
+]
+api.use('/hcot/*', async (c, next) => {
+  const path = c.req.path.replace(/^\/api/, '')
+  const method = c.req.method.toUpperCase()
+  const protectedOperation =
+    (method === 'GET' && HCOT_ADMIN_READ_PATHS.some(rule => rule.test(path))) ||
+    (method === 'POST' && HCOT_ADMIN_POST_PATHS.some(rule => rule.test(path))) ||
+    (method === 'PATCH' && /^\/hcot\/plans\/[^/]+$/.test(path))
+  if (!protectedOperation) return next()
+  const configured = c.env.HCOT_SETTINGS_ADMIN_EMAILS
+  const admins = (configured || '').split(',').map(email => email.trim().toLowerCase()).filter(Boolean)
+  if (!admins.length) return c.json({ error: 'HCOT administrator authorization is not configured.' }, 503)
+  const identity = await verifyAccessJwt(c.req.raw, c.env)
+  if (!identity) return c.json({ error: 'Verified Cloudflare Access identity required.' }, 401)
+  if (!admins.includes(identity.email)) return c.json({ error: 'HCOT administrator permission required.' }, 403)
+  await next()
+})
+
 /* ---------------- periods ---------------- */
 api.get('/periods', async (c) => {
   const rows = await c.env.DB.prepare(
@@ -1207,22 +1242,11 @@ api.post('/settings', async (c) => {
 })
 
 /** Wipe the sample data so a real rollout starts clean. */
-api.post('/reset', async (c) => {
-  const { confirm } = await c.req.json<{ confirm?: string }>().catch(() => ({ confirm: '' }))
-  if (confirm !== 'DELETE') {
-    return c.json({ error: 'Type DELETE to confirm.' }, 400)
-  }
-  const db = c.env.DB
-  await db.prepare('DELETE FROM submissions').run()
-  await db.prepare('DELETE FROM unmatched').run()
-  await db.prepare('DELETE FROM staff').run()
-  await db.prepare('DELETE FROM periods').run()
-  await db.prepare('DELETE FROM activity').run()
-  await db.prepare("UPDATE settings SET value = '1' WHERE key = 'seeded'").run()
-  await setSetting(db, 'seeded', '1')
-  await log(db, 'workspace.reset', 'All records cleared for a real rollout', 'admin')
-  return c.json({ ok: true })
-})
+/* P0: destructive reset is disabled; use a separately approved maintenance process. */
+api.post('/reset', async c => c.json({
+  error: 'Workspace reset is disabled for security. Use a separately approved maintenance process.',
+  code: 'WORKSPACE_RESET_DISABLED'
+}, 403))
 
 api.get('/demo-status', async (c) => {
   const demo = await getSetting(c.env.DB, 'demo', '')
