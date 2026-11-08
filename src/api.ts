@@ -33,7 +33,7 @@ import { seedDemo } from './lib/seed'
 import { previewHandshake } from './lib/hcot-handshake'
 import { verifyAccessJwt } from './lib/hcot-access'
 
-export type Env = { DB: D1Database; HCOT_ACCESS_TEAM_DOMAIN?: string; HCOT_ACCESS_AUD?: string }
+export type Env = { DB: D1Database; HCOT_ACCESS_TEAM_DOMAIN?: string; HCOT_ACCESS_AUD?: string; HCOT_SETTINGS_ADMIN_EMAILS?: string }
 const api = new Hono<{ Bindings: Env }>()
 
 api.use('/*', cors({ origin: (origin, c) => { try { return new URL(origin).origin === new URL(c.req.url).origin ? origin : '' } catch { return '' } }, allowHeaders: ['Content-Type', 'X-Access-Code'] }))
@@ -1176,12 +1176,27 @@ api.get('/activity', async (c) => {
 api.get('/settings', async (c) => {
   const rows = await c.env.DB.prepare('SELECT key, value FROM settings').all<{ key: string; value: string }>()
   const out: Record<string, string> = {}
-  for (const r of rows.results ?? []) out[r.key] = r.value
+  // Never disclose the actual shared tracker access code to browser clients.
+  // The UI only needs to know whether a code has been configured.
+  for (const r of rows.results ?? []) out[r.key] = r.key === 'access_code' ? (r.value ? 'configured' : '') : r.value
   return c.json({ settings: out })
 })
 
 api.post('/settings', async (c) => {
-  const body = await c.req.json<Record<string, string>>()
+  // Fail closed for HCOT-enabled Preview, including first-time setup when
+  // the tracker access code has not yet been initialized in D1.
+  if (c.env.HCOT_ACCESS_TEAM_DOMAIN || c.env.HCOT_ACCESS_AUD) {
+    if (!c.env.HCOT_ACCESS_TEAM_DOMAIN?.trim() || !c.env.HCOT_ACCESS_AUD?.trim()) {
+      return c.json({ error: 'HCOT Access configuration incomplete.' }, 503)
+    }
+    const admins = (c.env.HCOT_SETTINGS_ADMIN_EMAILS || '').split(',')
+      .map(email => email.trim().toLowerCase()).filter(Boolean)
+    if (!admins.length) return c.json({ error: 'Preview settings administrators are not configured.' }, 503)
+    const identity = await verifyAccessJwt(c.req.raw, c.env)
+    if (!identity) return c.json({ error: 'Cloudflare Access authentication required.' }, 401)
+    if (!admins.includes(identity.email)) return c.json({ error: 'Settings administrator permission required.' }, 403)
+  }
+  const body = await c.req.json<Record<string, string>>().catch(() => ({} as Record<string, string>))
   const allowed = ['org_name', 'access_code', 'deadline_reminder_days', 'form_owner_email']
   for (const [k, v] of Object.entries(body)) {
     if (!allowed.includes(k)) continue
