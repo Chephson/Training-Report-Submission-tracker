@@ -120,6 +120,27 @@ test('runtime: denied HCOT viewer cannot trigger seeding, default periods or tok
   assert.deepEqual(seedOrDefaultWrites, [])
 })
 
+test('runtime: invalid tracker code cannot run schema migration or seed writes', async () => {
+  const { db, queries } = fakeDb()
+  const response = await api.request('https://example.invalid/staff', {
+    headers: { 'x-access-code': 'incorrect-code' },
+  }, { DB: db })
+  assert.equal(response.status, 401)
+  assert.ok(queries.length > 0, 'authorization setting was checked')
+  assert.ok(!queries.some(q => q.op === 'run'), 'unauthorized request must not write to D1')
+})
+
+test('runtime: unexpected database authorization errors fail closed before migrations', async () => {
+  const queries = []
+  const db = { prepare(sql) {
+    queries.push(sql)
+    return { bind() { return this }, async first() { throw new Error('D1 connection unavailable') } }
+  } }
+  const response = await api.request('https://example.invalid/staff', {}, { DB: db })
+  assert.equal(response.status, 503)
+  assert.ok(!queries.some(sql => /^CREATE|^ALTER|^INSERT|^UPDATE/i.test(sql)))
+})
+
 test('runtime: missing administrator allowlist fails closed with 503', async t => {
   const { sign, publicKey } = await signedFixture()
   globalThis.fetch = async () => new Response(JSON.stringify({ keys: [publicKey] }), { status: 200 })
