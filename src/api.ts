@@ -670,6 +670,8 @@ api.patch('/hcot/plans/:id', async c => {
   const result=await c.env.DB.prepare(`UPDATE hcot_training_plans SET title=?,start_date=?,end_date=?,location=?,provider=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='draft'`)
     .bind(b.title.trim(),b.start_date||null,b.end_date||null,b.location||null,b.provider||null,b.notes||null,id).run()
   if(!result.meta.changes)return c.json({error:'Draft plan not found.'},404)
+  const actor = await verifyAccessJwt(c.req.raw, c.env)
+  await log(c.env.DB,'hcot.plan.updated',`Training plan #${id}`,actor!.email)
   return c.json({ok:true})
 })
 api.get('/hcot/plans/:id/participants', async c => {
