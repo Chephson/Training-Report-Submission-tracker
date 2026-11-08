@@ -19,14 +19,20 @@ test('HCOT write authorization is enforced by a server-side Access identity and 
   for (const [path, method] of routes) {
     assert.ok(api.includes("api." + method.toLowerCase() + "('" + path + "'"), path + ' exists')
   }
-  assert.match(guard, /method === 'POST'/)
-  assert.match(guard, /method === 'PATCH'/)
-  assert.match(guard, /mapping-validate/)
+  assert.match(guard, /isHcotViewerRead\(method, path\)/)
+  assert.match(guard, /if \(viewerRead\) return next\(\)/)
+  assert.match(guard, /admins\.includes\(identity\.email\.trim\(\)\.toLowerCase\(\)\)/)
 })
-test('sensitive HCOT reads require administrator permission', () => {
-  for (const path of ['participants', 'reviews', 'cost-estimates', 'goals', 'mapping-requests', 'handshake-preview'])
-    assert.ok(guard.includes(path), path + ' is protected')
-  assert.match(guard, /method === 'GET'/)
+test('sensitive HCOT reads and all writes require administrator permission', async () => {
+  const { isHcotViewerRead } = await import('../src/lib/hcot-roles.ts')
+  for (const path of ['/hcot/plans','/hcot/calendar','/hcot/competencies','/hcot/access-session'])
+    assert.equal(isHcotViewerRead('GET',path),true,path+' is viewer-readable')
+  for (const path of ['/hcot/plans/3/participants','/hcot/reviews','/hcot/cost-estimates','/hcot/goals','/hcot/mapping-requests','/hcot/handshake-preview','/hcot/identity-audit','/hcot/mapping-readiness','/hcot/mapping-exceptions','/hcot/mapping-approval-status','/hcot/unknown'])
+    assert.equal(isHcotViewerRead('GET',path),false,path+' is administrator-only')
+  for (const method of ['POST','PATCH','PUT','DELETE'])
+    for (const path of ['/hcot/plans','/hcot/plans/3','/hcot/plans/3/participants','/hcot/competencies','/hcot/goals','/hcot/mapping-approve','/hcot/unknown'])
+      assert.equal(isHcotViewerRead(method,path),false,method+' '+path+' is administrator-only')
+  assert.equal(isHcotViewerRead('GET','/hcot/plans/3'),false,'no accidental prefix matching')
 })
 test('destructive reset is disabled with no delete statements in route', () => {
   const block = api.slice(api.indexOf("api.post('/reset'"), api.indexOf("api.get('/demo-status'"))
