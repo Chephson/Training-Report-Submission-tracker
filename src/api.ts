@@ -65,17 +65,6 @@ api.use('/hcot/*', async (c, next) => {
   await next()
 })
 
-/* ---------------- schema + defaults on every request ---------------- */
-api.use('/*', async (c, next) => {
-  await ensureSchema(c.env.DB)
-  // Seed first: the sample data creates its own periods, so the "create one
-  // default period" step must not run ahead of it and leave an empty extra.
-  await seedDemo(c.env.DB).catch(() => {})
-  await ensureDefaultPeriod(c.env.DB)
-  await ensureTokens(c.env.DB)
-  await next()
-})
-
 /* ---------------- simple access gate ---------------- */
 const PUBLIC_PATHS = ['/login', '/session', '/ingest/']
 
@@ -94,7 +83,7 @@ function readCookie(cookieHeader: string, name: string): string | null {
 
 api.use('/*', async (c, next) => {
   const path = c.req.path.replace('/api', '')
-  if (PUBLIC_PATHS.some((p) => path.startsWith(p))) return next()
+  if (path === '/login' || path === '/session' || path.startsWith('/ingest/')) return next()
 
   if (path === '/hcot' || path.startsWith('/hcot/')) {
     if (!c.env.HCOT_ACCESS_TEAM_DOMAIN?.trim() || !c.env.HCOT_ACCESS_AUD?.trim()) {
@@ -109,9 +98,26 @@ api.use('/*', async (c, next) => {
     if (!identity) return c.json({ error: 'Cloudflare Access authentication required.' }, 401)
   }
 
-  const code = await getSetting(c.env.DB, 'access_code')
+  // On a brand-new installation the settings table may not exist yet.
+  // A missing table means first-time setup; other database errors fail closed.
+  let code = ''
+  try {
+    code = await getSetting(c.env.DB, 'access_code')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (!/no such table:\s*settings\b/i.test(message)) {
+      return c.json({ error: 'Tracker authorization unavailable.' }, 503)
+    }
+  }
   if (!code) {
     if (path.startsWith('/hcot/')) return c.json({ error: 'HCOT access is disabled until the tracker access code is configured.' }, 403)
+    // On HCOT-enabled Preview, bootstrap may configure the first access code
+    // through the separately verified Access-admin settings route only.
+    // Do not expose other tracker endpoints before setup completes.
+    if (c.env.HCOT_ACCESS_TEAM_DOMAIN || c.env.HCOT_ACCESS_AUD) {
+      if (path === '/settings' && c.req.method.toUpperCase() === 'POST') return next()
+      return c.json({ error: 'Tracker setup required before accessing this endpoint.', code: 'TRACKER_SETUP_REQUIRED' }, 403)
+    }
     return next()
   }
 
@@ -150,6 +156,65 @@ api.post('/login', async (c) => {
 api.get('/session', async (c) => {
   const code = await getSetting(c.env.DB, 'access_code')
   return c.json({ locked: !!code, org_name: await getSetting(c.env.DB, 'org_name', '') })
+})
+
+/* P0: HCOT least-privilege authorization. The shared tracker access code is NOT a role.
+   The signed Access identity is independently verified by the existing HCOT gate.
+   This middleware re-verifies it before granting a privileged operation. */
+const HCOT_ADMIN_READ_PATHS = [
+  /^\/hcot\/plans\/[^/]+\/participants$/,
+  /^\/hcot\/reviews$/,
+  /^\/hcot\/cost-estimates$/,
+  /^\/hcot\/goals$/,
+  /^\/hcot\/mapping-requests$/,
+  /^\/hcot\/handshake-preview$/,
+  /^\/hcot\/plans$/,
+  /^\/hcot\/competencies$/,
+  /^\/hcot\/calendar$/,
+  /^\/hcot\/identity-audit$/,
+  /^\/hcot\/mapping-readiness$/,
+  /^\/hcot\/mapping-exceptions$/,
+  /^\/hcot\/mapping-approval-status$/,
+]
+const HCOT_ADMIN_POST_PATHS = [
+  /^\/hcot\/plans$/,
+  /^\/hcot\/plans\/[^/]+\/participants$/,
+  /^\/hcot\/competencies$/,
+  /^\/hcot\/goals$/,
+  /^\/hcot\/mapping-validate$/,
+]
+api.use('/hcot/*', async (c, next) => {
+  const path = c.req.path.replace(/^\/api/, '')
+  const method = c.req.method.toUpperCase()
+  const protectedOperation =
+    (method === 'GET' && HCOT_ADMIN_READ_PATHS.some(rule => rule.test(path))) ||
+    (method === 'POST' && HCOT_ADMIN_POST_PATHS.some(rule => rule.test(path))) ||
+    (method === 'PATCH' && /^\/hcot\/plans\/[^/]+$/.test(path))
+  if (!protectedOperation) return next()
+  const configured = c.env.HCOT_SETTINGS_ADMIN_EMAILS
+  const admins = (configured || '').split(',').map(email => email.trim().toLowerCase()).filter(Boolean)
+  if (!admins.length) return c.json({ error: 'HCOT administrator authorization is not configured.' }, 503)
+  const identity = await verifyAccessJwt(c.req.raw, c.env)
+  if (!identity) return c.json({ error: 'Verified Cloudflare Access identity required.' }, 401)
+  if (!admins.includes(identity.email.trim().toLowerCase())) return c.json({ error: 'HCOT administrator permission required.' }, 403)
+  await next()
+})
+
+/* Schema migration runs after the shared-code gate for protected routes.
+   Public login/session/ingest retain their existing bootstrap behavior. */
+api.use('/*', async (c, next) => {
+  await ensureSchema(c.env.DB)
+  await next()
+})
+
+/* Run seed/default/token writes only after shared-code and HCOT role checks.
+   Schema migration still precedes the shared-code gate and is tracked separately. */
+api.use('/*', async (c, next) => {
+  // Seed first: sample data creates its own periods.
+  await seedDemo(c.env.DB).catch(() => {})
+  await ensureDefaultPeriod(c.env.DB)
+  await ensureTokens(c.env.DB)
+  await next()
 })
 
 /* ---------------- periods ---------------- */
@@ -594,7 +659,8 @@ api.post('/hcot/plans', async c => {
   const result=await c.env.DB.prepare(`INSERT INTO hcot_training_plans
     (title,start_date,end_date,location,provider,notes) VALUES (?,?,?,?,?,?)`)
     .bind(title,body.start_date||null,body.end_date||null,body.location?.trim()||null,body.provider?.trim()||null,body.notes?.trim()||null).run()
-  await log(c.env.DB,'hcot.plan.created',`Training plan #${result.meta.last_row_id}`,'admin')
+  const actor = await verifyAccessJwt(c.req.raw, c.env)
+  await log(c.env.DB,'hcot.plan.created',`Training plan #${result.meta.last_row_id}`,actor?.email || 'unknown')
   return c.json({ok:true,id:result.meta.last_row_id},201)
 })
 api.patch('/hcot/plans/:id', async c => {
@@ -752,8 +818,8 @@ api.get('/hcot/access-session', async c => {
   return c.json({
     authenticated: true,
     email: identity.email,
-    role: 'viewer',
-    role_source: 'temporary_read_only_default',
+    role: (c.env.HCOT_SETTINGS_ADMIN_EMAILS || '').split(',').map(email => email.trim().toLowerCase()).includes(identity.email.trim().toLowerCase()) ? 'admin' : 'viewer',
+    role_source: 'verified_access_identity_and_admin_allowlist',
     maker_enabled: false,
     checker_enabled: false,
     mapping_approval_enabled: false,
@@ -925,17 +991,25 @@ api.post('/unmatched/:id/ignore', async (c) => {
 
 /* ---------------- webhook ingest ---------------- */
 api.post('/ingest/:token', async (c) => {
+  // Bound webhook payload bytes before D1 access or JSON parsing.
+  const maxBytes = 256 * 1024
+  const declaredLength = Number(c.req.header('content-length') || 0)
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) return c.json({ error: 'Webhook payload too large.', code: 'INGEST_PAYLOAD_LIMIT' }, 413)
+  const rawBody = await c.req.raw.text()
+  if (new TextEncoder().encode(rawBody).byteLength > maxBytes) return c.json({ error: 'Webhook payload too large.', code: 'INGEST_PAYLOAD_LIMIT' }, 413)
   const period = await periodByToken(c.env.DB, c.req.param('token'))
   if (!period) return c.json({ error: 'Unknown webhook token.' }, 404)
 
   let body: unknown
   try {
-    body = await c.req.json()
+    body = JSON.parse(rawBody)
   } catch {
     return c.json({ error: 'Body must be JSON.' }, 400)
   }
 
+  // Reject oversized batches before processing any records to avoid partial ingestion.
   const list = Array.isArray(body) ? body : [body]
+  if (list.length > 100) return c.json({ error: 'Maximum 100 responses per webhook request.', code: 'INGEST_BATCH_LIMIT' }, 413)
   const results = []
   for (const item of list) {
     const rec = extractRecord(item)
@@ -1194,10 +1268,14 @@ api.post('/settings', async (c) => {
     if (!admins.length) return c.json({ error: 'Preview settings administrators are not configured.' }, 503)
     const identity = await verifyAccessJwt(c.req.raw, c.env)
     if (!identity) return c.json({ error: 'Cloudflare Access authentication required.' }, 401)
-    if (!admins.includes(identity.email)) return c.json({ error: 'Settings administrator permission required.' }, 403)
+    if (!admins.includes(identity.email.trim().toLowerCase())) return c.json({ error: 'Settings administrator permission required.' }, 403)
   }
   const body = await c.req.json<Record<string, string>>().catch(() => ({} as Record<string, string>))
   const allowed = ['org_name', 'access_code', 'deadline_reminder_days', 'form_owner_email']
+  // Never permit an empty access code to silently unlock an initialized tracker.
+  if (Object.prototype.hasOwnProperty.call(body, 'access_code') && !String(body.access_code ?? '').trim()) {
+    return c.json({ error: 'Access code cannot be empty. Use a separately approved recovery process.', code: 'ACCESS_CODE_REQUIRED' }, 400)
+  }
   for (const [k, v] of Object.entries(body)) {
     if (!allowed.includes(k)) continue
     await setSetting(c.env.DB, k, String(v ?? ''))
@@ -1207,22 +1285,11 @@ api.post('/settings', async (c) => {
 })
 
 /** Wipe the sample data so a real rollout starts clean. */
-api.post('/reset', async (c) => {
-  const { confirm } = await c.req.json<{ confirm?: string }>().catch(() => ({ confirm: '' }))
-  if (confirm !== 'DELETE') {
-    return c.json({ error: 'Type DELETE to confirm.' }, 400)
-  }
-  const db = c.env.DB
-  await db.prepare('DELETE FROM submissions').run()
-  await db.prepare('DELETE FROM unmatched').run()
-  await db.prepare('DELETE FROM staff').run()
-  await db.prepare('DELETE FROM periods').run()
-  await db.prepare('DELETE FROM activity').run()
-  await db.prepare("UPDATE settings SET value = '1' WHERE key = 'seeded'").run()
-  await setSetting(db, 'seeded', '1')
-  await log(db, 'workspace.reset', 'All records cleared for a real rollout', 'admin')
-  return c.json({ ok: true })
-})
+/* P0: destructive reset is disabled; use a separately approved maintenance process. */
+api.post('/reset', async c => c.json({
+  error: 'Workspace reset is disabled for security. Use a separately approved maintenance process.',
+  code: 'WORKSPACE_RESET_DISABLED'
+}, 403))
 
 api.get('/demo-status', async (c) => {
   const demo = await getSetting(c.env.DB, 'demo', '')
