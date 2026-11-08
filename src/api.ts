@@ -994,7 +994,9 @@ api.post('/ingest/:token', async (c) => {
     return c.json({ error: 'Body must be JSON.' }, 400)
   }
 
+  // Reject oversized batches before processing any records to avoid partial ingestion.
   const list = Array.isArray(body) ? body : [body]
+  if (list.length > 100) return c.json({ error: 'Maximum 100 responses per webhook request.', code: 'INGEST_BATCH_LIMIT' }, 413)
   const results = []
   for (const item of list) {
     const rec = extractRecord(item)
@@ -1253,7 +1255,7 @@ api.post('/settings', async (c) => {
     if (!admins.length) return c.json({ error: 'Preview settings administrators are not configured.' }, 503)
     const identity = await verifyAccessJwt(c.req.raw, c.env)
     if (!identity) return c.json({ error: 'Cloudflare Access authentication required.' }, 401)
-    if (!admins.includes(identity.email)) return c.json({ error: 'Settings administrator permission required.' }, 403)
+    if (!admins.includes(identity.email.trim().toLowerCase())) return c.json({ error: 'Settings administrator permission required.' }, 403)
   }
   const body = await c.req.json<Record<string, string>>().catch(() => ({} as Record<string, string>))
   const allowed = ['org_name', 'access_code', 'deadline_reminder_days', 'form_owner_email']
