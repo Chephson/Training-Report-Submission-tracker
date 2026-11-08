@@ -159,38 +159,21 @@ api.get('/session', async (c) => {
 })
 
 /* P0: HCOT least-privilege authorization. The shared tracker access code is NOT a role.
-   The signed Access identity is independently verified by the existing HCOT gate.
-   This middleware re-verifies it before granting a privileged operation. */
-const HCOT_ADMIN_READ_PATHS = [
-  /^\/hcot\/plans\/[^/]+\/participants$/,
-  /^\/hcot\/reviews$/,
-  /^\/hcot\/cost-estimates$/,
-  /^\/hcot\/goals$/,
-  /^\/hcot\/mapping-requests$/,
-  /^\/hcot\/handshake-preview$/,
+   All HCOT requests first pass the verified Cloudflare Access JWT gate.
+   Stage 1: verified HR viewers may read only explicitly allowlisted HCOT resources.
+   Every other HCOT operation (including all writes) requires a named administrator. */
+const HCOT_VIEWER_READ_PATHS = [
+  /^\/hcot\/access-session$/,
   /^\/hcot\/plans$/,
-  /^\/hcot\/competencies$/,
   /^\/hcot\/calendar$/,
-  /^\/hcot\/identity-audit$/,
-  /^\/hcot\/mapping-readiness$/,
-  /^\/hcot\/mapping-exceptions$/,
-  /^\/hcot\/mapping-approval-status$/,
-]
-const HCOT_ADMIN_POST_PATHS = [
-  /^\/hcot\/plans$/,
-  /^\/hcot\/plans\/[^/]+\/participants$/,
   /^\/hcot\/competencies$/,
-  /^\/hcot\/goals$/,
-  /^\/hcot\/mapping-validate$/,
 ]
 api.use('/hcot/*', async (c, next) => {
   const path = c.req.path.replace(/^\/api/, '')
   const method = c.req.method.toUpperCase()
-  const protectedOperation =
-    (method === 'GET' && HCOT_ADMIN_READ_PATHS.some(rule => rule.test(path))) ||
-    (method === 'POST' && HCOT_ADMIN_POST_PATHS.some(rule => rule.test(path))) ||
-    (method === 'PATCH' && /^\/hcot\/plans\/[^/]+$/.test(path))
-  if (!protectedOperation) return next()
+  // Explicit allowlist, not a broad "all GET" exception. New endpoints fail closed.
+  const viewerRead = method === 'GET' && HCOT_VIEWER_READ_PATHS.some(rule => rule.test(path))
+  if (viewerRead) return next()
   const configured = c.env.HCOT_SETTINGS_ADMIN_EMAILS
   const admins = (configured || '').split(',').map(email => email.trim().toLowerCase()).filter(Boolean)
   if (!admins.length) return c.json({ error: 'HCOT administrator authorization is not configured.' }, 503)
