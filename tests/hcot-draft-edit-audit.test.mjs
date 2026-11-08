@@ -30,3 +30,9 @@ test('UI offers Edit draft only for draft plans and persists via PATCH', () => {
   assert.match(ui, /renderHCOT\(el\)/)
   assert.match(ui, /hcot-edit-cancel/)
 })
+
+test('collection event handlers and staff filters never use the single-element selector', () => {
+  assert.match(ui, /\$\$\('\.hcot-manage'\)\.forEach/)
+  assert.match(ui, /\$\$\('\.pg-staff'\)\.forEach/)
+  assert.doesNotMatch(ui, /(?<!\$)\$\([^\n]*?\)\.forEach\(/, 'forEach must not be called on the single-element $ selector')
+})
