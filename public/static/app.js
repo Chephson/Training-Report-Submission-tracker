@@ -217,6 +217,8 @@ const ROUTES = {
   dashboard: { title: 'Dashboard', sub: 'Report submission progress by training programme', render: renderDashboard },
   tracker: { title: 'Submission tracker', sub: 'Filter outstanding and submitted reports by training programme', render: renderTracker },
   programmes: { title: 'Programme assignments', sub: 'Manage assignments and outstanding reports', render: renderProgrammes },
+  outstanding: { title: 'Outstanding reports', sub: 'Track incomplete training reports for each employee and programme', render: renderOutstandingReports },
+  hcot: { title: 'HCOT Training Monitor', sub: 'Training planning workspace (integration preview)', render: renderHCOT },
   history: { title: 'Staff training history', sub: 'A consolidated record of training programmes reported by staff', render: renderTrainingHistory },
   inbox: { title: 'Unmatched responses', sub: 'Submissions we could not attribute to anyone on the roster', render: renderInbox },
   roster: { title: 'Staff roster', sub: 'The people required to submit reports', render: renderRoster },
@@ -242,6 +244,16 @@ function navigate(view, initial) {
     if (e.message === 'locked') return
     el.innerHTML = `<div class="notice notice-bad"><span class="nicon">${ico('alert')}</span><div><strong>Could not load this page</strong>${esc(e.message)}</div></div>`
   })
+}
+
+// Insert HCOT alongside the existing navigation without altering existing pages.
+const hcotNav=document.querySelector('.nav')
+if(hcotNav&&!hcotNav.querySelector('[data-view="hcot"]')){
+  const link=document.createElement('a')
+  link.href='#/hcot';link.dataset.view='hcot'
+  link.innerHTML=ico('file',18)+'<span>HCOT Training Monitor</span>'
+  const after=hcotNav.querySelector('[data-view="programmes"]')
+  if(after)after.insertAdjacentElement('afterend',link);else hcotNav.appendChild(link)
 }
 
 window.addEventListener('hashchange', () => {
@@ -779,6 +791,59 @@ async function renderInbox(el) {
 }
 
 
+async function renderOutstandingReports(el) {
+  const period = Number(state.periodId)
+  const [report, catalogue] = await Promise.all([
+    api('/outstanding-programme-reports?period=' + period),
+    api('/programmes?period=' + period)
+  ])
+  const staff = report.staff || []
+  const programmes = catalogue.programmes || []
+  const summary = report.summary || {}
+  el.innerHTML = '<div class="card"><div class="card-head"><h3>Outstanding training reports</h3></div><div class="card-body">' +
+    '<p>Each assigned employee is counted once per programme. A staff member may have both submitted and outstanding reports.</p>' +
+    '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px">' +
+    [['Assigned reports',summary.assigned_reports],['Submitted reports',summary.submitted_reports],['Outstanding reports',summary.outstanding_reports],['Staff with outstanding reports',summary.staff_with_outstanding]]
+      .map(x=>'<div style="min-width:130px"><strong style="font-size:24px">'+Number(x[1]||0)+'</strong><div>'+esc(x[0])+'</div></div>').join('') + '</div>' +
+    '<label class="field"><span>Search employee or team</span><input type="search" id="out-search" placeholder="Name, email or team"></label>' +
+    '<label class="field"><span>Programme</span><select id="out-programme"><option value="">All programmes</option>'+programmes.map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select></label>' +
+    '<label class="field"><span>Submission status</span><select id="out-status"><option value="pending">Outstanding only</option><option value="all">All assignments</option><option value="submitted">Submitted only</option></select></label>' +
+    '<button class="btn" id="out-export">Export filtered CSV</button>' +
+    '<p id="out-count" aria-live="polite"></p><div class="table-wrap"><table><thead><tr><th>Employee</th><th>Team</th><th>Programme</th><th>Status</th></tr></thead><tbody id="out-rows"></tbody></table></div></div></div>'
+  const allRows = staff.flatMap(s => {
+    return (s.outstanding_programmes||[]).map(p => ({name:s.full_name,email:s.email,team:s.team||'',programme:p.training_programme,programme_id:Number(p.programme_id),status:'Outstanding'}))
+
+  })
+  // The summary API exposes only pending programme names; submitted rows are not
+  // reconstructed from totals because that would misidentify individual reports.
+  $('#out-status').value='pending'
+  $('#out-status').querySelector('option[value="all"]').disabled=true
+  $('#out-status').querySelector('option[value="submitted"]').disabled=true
+  const filtered = () => {
+    const q=$('#out-search').value.trim().toLowerCase(), programme=$('#out-programme').value
+    return allRows.filter(r=>(!q||[r.name,r.email,r.team].some(v=>String(v||'').toLowerCase().includes(q)))&&(!programme||r.programme_id===Number(programme)))
+  }
+  const draw = () => {
+    const rows=filtered()
+    $('#out-count').textContent=rows.length+' outstanding programme reports match the filters.'
+    $('#out-rows').innerHTML=rows.length?rows.map(r=>'<tr><td>'+esc(r.name)+'<div>'+esc(r.email)+'</div></td><td>'+esc(r.team)+'</td><td>'+esc(r.programme)+'</td><td>Outstanding</td></tr>').join(''):'<tr><td colspan="4">No outstanding reports match your filters.</td></tr>'
+  }
+  $('#out-search').addEventListener('input',draw)
+  $('#out-programme').addEventListener('change',draw)
+  $('#out-export').onclick=()=>{
+    const rows=[['Employee','Email','Team','Programme','Status'],...filtered().map(r=>[r.name,r.email,r.team,r.programme,r.status])]
+    const csv=rows.map(row=>row.map(value=>{
+      const safe=String(value??'').replace(/^\s*[=+@-]/,m=>"'"+m)
+      return '"'+safe.replace(/"/g,'""')+'"'
+    }).join(',')).join('\r\n')
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8'})
+    const url=URL.createObjectURL(blob)
+    const a=document.createElement('a');a.href=url;a.download='outstanding-reports-period-'+period+'.csv';a.click()
+    setTimeout(()=>URL.revokeObjectURL(url),1000)
+  }
+  draw()
+}
+
 async function renderProgrammes(el) {
   const period=Number(state.periodId)
   const [pr,sr,ar]=await Promise.all([api('/programmes?period='+period),api('/staff'),api('/programme-assignments?period='+period)])
@@ -813,10 +878,122 @@ async function renderProgrammes(el) {
     $('#pg-rename-save').onclick=async()=>{try{await api('/programmes/'+$('#pg-rename-id').value,{method:'PATCH',body:JSON.stringify({name:$('#pg-rename-name').value})});toast('Programme name updated');renderProgrammes(el)}catch(e){toast(e.message,true)}}
   }
   $('#pg-tab-import').click()
-  $('#pg-staff-search').oninput=e=>{const q=e.target.value.trim().toLowerCase();$('.pg-staff').forEach(x=>{const row=x.closest('label');row.style.display=row.textContent.toLowerCase().includes(q)?'block':'none'})}
+  $('#pg-staff-search').oninput=e=>{const q=e.target.value.trim().toLowerCase();$$('.pg-staff').forEach(x=>{const row=x.closest('label');row.style.display=row.textContent.toLowerCase().includes(q)?'block':'none'})}
   $('#pg-add').onclick=async()=>{try{await api('/programmes',{method:'POST',body:JSON.stringify({name:$('#pg-name').value.trim()})});toast('Programme created');renderProgrammes(el)}catch(e){toast(e.message,true)}}
   $('#pg-assign').onclick=async()=>{const programme_id=Number($('#pg-choice').value),staff_ids=Array.from(document.querySelectorAll('.pg-staff')).filter(x=>x.checked).map(x=>Number(x.value));try{const r=await api('/programme-assignments',{method:'POST',body:JSON.stringify({programme_id,staff_ids,period_id:period})});toast(r.added+' staff assignments added');renderProgrammes(el)}catch(e){toast(e.message,true)}}
   document.querySelectorAll('.pg-view').forEach(b=>b.onclick=async()=>{const data=await api('/programme-progress?period='+period+'&programme_id='+b.dataset.id);$('#pg-detail').innerHTML='<div class="card"><div class="card-head"><h3>Assigned staff: '+data.assigned+' · Submitted: '+data.submitted+' · Outstanding: '+data.pending+'</h3></div><div class="table-wrap"><table><thead><tr><th>Staff</th><th>Email</th><th>Status</th><th></th></tr></thead><tbody>'+data.rows.map(x=>'<tr><td>'+esc(x.full_name)+'</td><td>'+esc(x.email)+'</td><td>'+(x.submitted_at?'Submitted':'Outstanding')+'</td><td><button class="btn btn-sm pg-remove" data-id="'+x.id+'">Unassign</button></td></tr>').join('')+'</tbody></table></div></div>';document.querySelectorAll('.pg-remove').forEach(x=>x.onclick=async()=>{if(!confirm('Remove assignment? Existing submissions will be kept.'))return;await api('/programme-assignments/'+x.dataset.id,{method:'DELETE'});renderProgrammes(el)})})
+}
+
+/* HCOT phase 2: modular screens reuse existing cards, tables and form styles. */
+async function renderHCOTSection(section) {
+  const el=$('#hcot-extra')
+  if(!el)return
+  el.innerHTML='<div class="card"><div class="card-body">Loading HCOT records…</div></div>'
+  try {
+    if(section==='calendar'){
+      const year=new Date().getFullYear()
+      const data=await api('/hcot/calendar?year='+year)
+      el.innerHTML='<div class="card"><div class="card-head"><h3>Training calendar — '+year+'</h3></div><div class="table-wrap"><table><thead><tr><th>Training</th><th>Dates</th><th>Location</th><th>Participants</th></tr></thead><tbody>'+
+        (data.plans||[]).map(x=>'<tr><td>'+esc(x.title)+'</td><td>'+esc(x.start_date||'—')+' – '+esc(x.end_date||'—')+'</td><td>'+esc(x.location||'—')+'</td><td>'+x.participants+'</td></tr>').join('')+
+        (data.plans.length?'':'<tr><td colspan="4">No training plans scheduled for this year.</td></tr>')+'</tbody></table></div></div>'
+    }else if(section==='competencies'){
+      const isAdmin=(await api('/hcot/access-session')).role==='admin'
+      const data=await api('/hcot/competencies')
+      el.innerHTML='<div class="card"><div class="card-head"><h3>Competency library</h3></div>'+(isAdmin?'<div class="card-body"><label class="field"><span>Competency name</span><input id="hcot-comp-name"></label><label class="field"><span>Category</span><select id="hcot-comp-cat"><option value="core">Core</option><option value="functional">Functional</option></select></label><label class="field"><span>Division</span><input id="hcot-comp-div"></label><label class="field"><span>Unit</span><input id="hcot-comp-unit"></label><label class="field"><span>Description</span><textarea id="hcot-comp-desc"></textarea></label><button class="btn btn-primary" id="hcot-comp-add">Add competency</button></div>':'')+'<div class="table-wrap"><table><thead><tr><th>Competency</th><th>Category</th><th>Division / unit</th></tr></thead><tbody>'+
+        data.competencies.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+esc(x.category)+'</td><td>'+esc([x.division,x.unit].filter(Boolean).join(' / ')||'Organisation-wide')+'</td></tr>').join('')+
+        (data.competencies.length?'':'<tr><td colspan="3">No competencies entered.</td></tr>')+'</tbody></table></div></div>'
+      if(isAdmin)$('#hcot-comp-add').onclick=async()=>{try{await api('/hcot/competencies',{method:'POST',body:JSON.stringify({name:$('#hcot-comp-name').value,category:$('#hcot-comp-cat').value,division:$('#hcot-comp-div').value,unit:$('#hcot-comp-unit').value,description:$('#hcot-comp-desc').value})});toast('Competency added');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
+    }else if(section==='goals'){
+      const data=await api('/hcot/goals')
+      el.innerHTML='<div class="card"><div class="card-head"><h3>Development goals</h3></div><div class="card-body"><label class="field"><span>Goal title</span><input id="hcot-goal-title"></label><label class="field"><span>Scope</span><select id="hcot-goal-scope"><option value="unit">Unit</option><option value="individual">Individual</option></select></label><label class="field"><span>Owner / unit label</span><input id="hcot-goal-owner"></label><label class="field"><span>Target date</span><input type="date" id="hcot-goal-date"></label><label class="field"><span>Measure / KPI</span><input id="hcot-goal-measure"></label><label class="field"><span>Target value</span><input id="hcot-goal-value"></label><button class="btn btn-primary" id="hcot-goal-add">Add draft goal</button></div><div class="table-wrap"><table><thead><tr><th>Goal</th><th>Scope</th><th>Owner</th><th>Target</th></tr></thead><tbody>'+
+        data.goals.map(x=>'<tr><td>'+esc(x.title)+'</td><td>'+esc(x.scope)+'</td><td>'+esc(x.owner_label||'—')+'</td><td>'+esc(x.target_date||'—')+'</td></tr>').join('')+
+        (data.goals.length?'':'<tr><td colspan="4">No goals entered.</td></tr>')+'</tbody></table></div></div>'
+      $('#hcot-goal-add').onclick=async()=>{try{await api('/hcot/goals',{method:'POST',body:JSON.stringify({title:$('#hcot-goal-title').value,scope:$('#hcot-goal-scope').value,owner_label:$('#hcot-goal-owner').value,target_date:$('#hcot-goal-date').value,measure:$('#hcot-goal-measure').value,target_value:$('#hcot-goal-value').value})});toast('Draft goal added');renderHCOTSection('goals')}catch(e){toast(e.message,true)}}
+    }else if(section==='identity'){
+      const [d,m,x,auditApproval]=await Promise.all([api('/hcot/identity-audit'),api('/hcot/mapping-readiness'),api('/hcot/mapping-exceptions'),api('/hcot/mapping-approval-status')])
+      el.innerHTML='<div class="card"><div class="card-head"><h3>Staff identity integrity audit</h3></div><div class="card-body"><p>Read-only checks against the existing tracker staff roster. No records are synchronized or modified.</p><p><strong>'+d.verified_links+'</strong> verified staff links · <strong>'+d.participant_records+'</strong> HCOT participant records · <strong>'+d.inactive_participants+'</strong> inactive staff assignments · <strong>'+d.missing_staff+'</strong> missing staff references</p><p>Mapping readiness: '+m.summary.active_verified_links+' active verified links, '+m.summary.unlinked_participants+' unlinked participants, '+m.summary.orphan_links+' orphan links, '+m.summary.inactive_links+' inactive links. Automatic synchronization remains disabled.</p></div><div class="table-wrap"><table><thead><tr><th>Training plan</th><th>Participants</th><th>Unverified links</th><th>Missing staff</th><th>Inactive staff</th></tr></thead><tbody>'+(x.plans||[]).map(p=>'<tr><td>'+esc(p.training_title)+'</td><td>'+p.participants+'</td><td>'+p.unverified+'</td><td>'+p.missing+'</td><td>'+p.inactive+'</td></tr>').join('')+((x.plans||[]).length?'':'<tr><td colspan="5">No HCOT training plans yet.</td></tr>')+'</tbody></table></div></div>'
+      el.insertAdjacentHTML('beforeend','<div class="card"><div class="card-head"><h3>Approval workflow readiness</h3></div><div class="card-body"><p>Pending: '+auditApproval.counts.pending+' · Approved: '+auditApproval.counts.approved+' · Rejected: '+auditApproval.counts.rejected+'</p><p>Named administrator authentication and independent maker/checker approval are not yet available. Mapping approvals remain blocked.</p></div></div>')
+      el.insertAdjacentHTML('beforeend','<div class="card mt-16"><div class="card-head"><h3>Validate proposed staff mapping</h3></div><div class="card-body"><p>Review only. This does not create a link or change employee records.</p><label class="field"><span>HCOT staff number</span><input id="hcot-map-number" maxlength="64"></label><label class="field"><span>Tracker staff ID</span><input id="hcot-map-staff" type="number" min="1" step="1"></label><button class="btn" id="hcot-map-check">Check mapping</button><p id="hcot-map-result" role="status"></p></div></div>')
+      $('#hcot-map-check').onclick=async()=>{
+        const output=$('#hcot-map-result')
+        output.textContent='Checking mapping…'
+        try {
+          const r=await api('/hcot/mapping-validate',{method:'POST',body:JSON.stringify({
+            hcot_staff_number:$('#hcot-map-number').value,tracker_staff_id:Number($('#hcot-map-staff').value)
+          })})
+          output.textContent=r.issues.length?'Review required: '+r.issues.join(', '):r.already_linked?'Existing verified link found.':'No collisions found. Independent approval is still required.'
+        }catch(e){output.textContent='Validation unavailable: '+e.message}
+      }
+    }else if(section==='handshake'){
+      const period=Number(state.periodId)
+      const data=await api('/hcot/handshake-preview?period='+period)
+      const summary=data.summary||{}
+      el.innerHTML='<div class="card"><div class="card-head"><h3>HCOT ↔ Tracker handshake preview</h3></div><div class="card-body"><p>This is a read-only reconciliation. It does not create programmes, change staff records, or assign participants.</p><p><strong>'+summary.plans+' plans</strong> · '+summary.matched+' matched programmes · '+summary.new_programmes+' new programme names · '+summary.ambiguous+' ambiguous matches · '+summary.assignments_to_add+' potential assignments · '+(summary.blocked_participants||0)+' participants blocked pending programme mapping</p></div><div class="table-wrap"><table><thead><tr><th>HCOT training</th><th>Programme match</th><th>Participants</th><th>Already assigned</th><th>Potential additions</th></tr></thead><tbody>'+
+        data.plans.map(x=>'<tr><td>'+esc(x.title)+'</td><td>'+esc(x.match_status.replace('_',' '))+'</td><td>'+x.participants+'</td><td>'+x.already_assigned+'</td><td>'+x.would_assign+'</td></tr>').join('')+
+        (data.plans.length?'':'<tr><td colspan="5">No HCOT plans to reconcile.</td></tr>')+'</tbody></table></div></div>'
+    }else if(section==='costing'){
+      const data=await api('/hcot/cost-estimates')
+      el.innerHTML='<div class="card"><div class="card-head"><h3>DTA / Estacode costing register</h3></div><div class="card-body"><p>Read-only register. No payment authorization or costing confirmation is enabled until approved rates, identity verification and segregation of duties are implemented.</p></div><div class="table-wrap"><table><thead><tr><th>Training</th><th>Staff</th><th>Currency</th><th>Estimated total</th><th>Status</th></tr></thead><tbody>'+
+        data.estimates.map(x=>'<tr><td>'+esc(x.training_title)+'</td><td>'+esc(x.staff_name)+'</td><td>'+esc(x.currency)+'</td><td>'+Number(x.total_amount).toLocaleString()+'</td><td>'+esc(x.status)+'</td></tr>').join('')+
+        (data.estimates.length?'':'<tr><td colspan="5">No cost estimates recorded.</td></tr>')+'</tbody></table></div></div>'
+    }else if(section==='reviews'){
+      const data=await api('/hcot/plans')
+      el.innerHTML='<div class="card"><div class="card-head"><h3>Supervisor evaluations</h3></div><div class="card-body"><p class="muted">Read-only pending review register. Evaluation submission will be enabled after supervisor identity and permissions are verified.</p><label class="field"><span>Training plan</span><select id="hcot-review-plan"><option value="">Select a plan</option>'+data.plans.map(x=>'<option value="'+x.id+'">'+esc(x.title)+'</option>').join('')+'</select></label><div id="hcot-review-list"></div></div></div>'
+      $('#hcot-review-plan').onchange=async()=>{const id=Number($('#hcot-review-plan').value);if(!id)return;const result=await api('/hcot/reviews?plan_id='+id);$('#hcot-review-list').innerHTML='<div class="table-wrap"><table><thead><tr><th>Staff</th><th>Review status</th></tr></thead><tbody>'+result.reviews.map(x=>'<tr><td>'+esc(x.full_name)+'</td><td>'+esc(x.status||'Pending')+'</td></tr>').join('')+'</tbody></table></div>'}
+    }
+  }catch(e){el.innerHTML='<div class="notice notice-bad">'+esc(e.message)+'</div>'}
+}
+
+/* HCOT unified module: draft planning only until security and synchronization are validated. */
+async function renderHCOT(el) {
+  const session=await api('/hcot/access-session')
+  const isAdmin=session.role==='admin'
+  if(!isAdmin){
+    const data=await api('/hcot/plans')
+    const plans=data.plans||[]
+    el.innerHTML='<div class="card"><div class="card-body"><p>Read-only HCOT access. Training plan changes require administrator permission.</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn hcot-tab" data-section="calendar">Calendar</button><button class="btn hcot-tab" data-section="competencies">Competencies</button></div></div></div><div id="hcot-extra" class="mt-16"></div>'+
+      '<div class="card mt-16"><div class="card-head"><h3>HCOT training plans — read only</h3></div><div class="table-wrap"><table><thead><tr><th>Training</th><th>Dates</th><th>Location</th><th>Participants</th></tr></thead><tbody>'+
+      plans.map(p=>'<tr><td>'+esc(p.title)+'</td><td>'+esc(p.start_date||'—')+' – '+esc(p.end_date||'—')+'</td><td>'+esc(p.location||'—')+'</td><td>'+p.participant_count+'</td></tr>').join('')+
+      (plans.length?'':'<tr><td colspan="4">No training plans yet.</td></tr>')+'</tbody></table></div></div>'
+    $$('.hcot-tab').forEach(btn=>btn.onclick=()=>renderHCOTSection(btn.dataset.section))
+    renderHCOTSection('calendar')
+    return
+  }
+  const [data,roster]=await Promise.all([api('/hcot/plans'),api('/staff')])
+  const plans=data.plans||[],staff=roster.staff||[]
+  el.innerHTML='<div class="card"><div class="card-body"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn hcot-tab" data-section="calendar">Calendar</button><button class="btn hcot-tab" data-section="competencies">Competencies</button><button class="btn hcot-tab" data-section="goals">Goals & KPIs</button><button class="btn hcot-tab" data-section="reviews">Evaluations</button><button class="btn hcot-tab" data-section="costing">Costing</button><button class="btn hcot-tab" data-section="handshake">Tracker handshake</button><button class="btn hcot-tab" data-section="identity">Staff identity audit</button></div></div></div><div id="hcot-extra" class="mt-16"></div><div class="card mt-16"><div class="card-head"><div><h3>HCOT Training Monitor — Training planning</h3><p>Unified workspace preview. Draft plans do not automatically create report assignments.</p></div></div><div class="card-body"><label class="field"><span>Training programme title</span><input id="hcot-title" placeholder="Enter training title"></label><div class="grid grid-2"><label class="field"><span>Start date</span><input id="hcot-start" type="date"></label><label class="field"><span>End date</span><input id="hcot-end" type="date"></label></div><label class="field"><span>Location</span><input id="hcot-location"></label><label class="field"><span>Provider</span><input id="hcot-provider"></label><button class="btn btn-primary" id="hcot-create">Create draft training plan</button></div></div>'+
+  '<div class="card mt-16"><div class="card-head"><h3>HCOT draft training plans</h3></div><div class="table-wrap"><table><thead><tr><th>Training</th><th>Dates</th><th>Location</th><th>Participants</th><th></th></tr></thead><tbody>'+
+  plans.map(p=>'<tr><td>'+esc(p.title)+'</td><td>'+esc(p.start_date||'—')+' – '+esc(p.end_date||'—')+'</td><td>'+esc(p.location||'—')+'</td><td>'+p.participant_count+'</td><td>'+(p.status==='draft'?'<button class="btn btn-sm hcot-edit" data-id="'+p.id+'">Edit draft</button> ':'')+'<button class="btn btn-sm hcot-manage" data-id="'+p.id+'">Manage participants</button></td></tr>').join('')+
+  (plans.length?'':'<tr><td colspan="5">No draft training plans yet.</td></tr>')+'</tbody></table></div></div><div id="hcot-participants" class="mt-16"></div>'
+  $$('.hcot-tab').forEach(btn=>btn.onclick=()=>renderHCOTSection(btn.dataset.section))
+  renderHCOTSection('calendar')
+  $('#hcot-create').onclick=async()=>{
+    try {
+      await api('/hcot/plans',{method:'POST',body:JSON.stringify({title:$('#hcot-title').value,start_date:$('#hcot-start').value,end_date:$('#hcot-end').value,location:$('#hcot-location').value,provider:$('#hcot-provider').value})})
+      toast('Draft training plan created');renderHCOT(el)
+    }catch(e){toast(e.message,true)}
+  }
+  $$('.hcot-edit').forEach(btn=>btn.onclick=()=>{
+    const plan=plans.find(p=>p.id===Number(btn.dataset.id))
+    if(!plan || plan.status!=='draft')return
+    const container=$('#hcot-participants')
+    container.innerHTML='<div class="card"><div class="card-head"><h3>Edit draft training plan</h3></div><div class="card-body"><label class="field"><span>Training programme title</span><input id="hcot-edit-title" maxlength="250"></label><div class="grid grid-2"><label class="field"><span>Start date</span><input id="hcot-edit-start" type="date"></label><label class="field"><span>End date</span><input id="hcot-edit-end" type="date"></label></div><label class="field"><span>Location</span><input id="hcot-edit-location"></label><label class="field"><span>Provider</span><input id="hcot-edit-provider"></label><label class="field"><span>Notes</span><textarea id="hcot-edit-notes"></textarea></label><button class="btn btn-primary" id="hcot-edit-save">Save changes</button> <button class="btn" id="hcot-edit-cancel">Cancel</button></div></div>'
+    for(const [field,value] of Object.entries({title:plan.title,start:plan.start_date,end:plan.end_date,location:plan.location,provider:plan.provider,notes:plan.notes}))$('#hcot-edit-'+field).value=value||''
+    $('#hcot-edit-cancel').onclick=()=>{container.innerHTML=''}
+    $('#hcot-edit-save').onclick=async()=>{
+      const title=$('#hcot-edit-title').value.trim()
+      if(!title || title.length>250){toast('Enter a training title (up to 250 characters).',true);return}
+      const payload={title,start_date:$('#hcot-edit-start').value,end_date:$('#hcot-edit-end').value,location:$('#hcot-edit-location').value,provider:$('#hcot-edit-provider').value,notes:$('#hcot-edit-notes').value}
+      try{await api('/hcot/plans/'+plan.id,{method:'PATCH',body:JSON.stringify(payload)});toast('Draft training plan updated');renderHCOT(el)}catch(e){toast(e.message,true)}
+    }
+  })
+  $$('.hcot-manage').forEach(btn=>btn.onclick=async()=>{
+    const id=Number(btn.dataset.id),participants=await api('/hcot/plans/'+id+'/participants')
+    const selected=new Set((participants.staff||[]).map(x=>x.id))
+    $('#hcot-participants').innerHTML='<div class="card"><div class="card-head"><h3>Participants — '+esc(plans.find(p=>p.id===id)?.title||'')+'</h3></div><div class="card-body"><label class="field"><span>Search staff</span><input id="hcot-search" type="search" placeholder="Name or email"></label><div style="max-height:230px;overflow:auto">'+staff.map(x=>'<label class="hcot-staff-row" style="display:block;padding:5px"><input type="checkbox" class="hcot-staff" value="'+x.id+'" '+(selected.has(x.id)?'checked disabled':'')+'> '+esc(x.full_name)+' — '+esc(x.email)+'</label>').join('')+'</div><button class="btn btn-primary mt-12" id="hcot-add">Add selected participants</button></div></div>'
+    $('#hcot-search').oninput=e=>{const q=e.target.value.toLowerCase();$$('.hcot-staff-row').forEach(row=>row.style.display=row.textContent.toLowerCase().includes(q)?'block':'none')}
+    $('#hcot-add').onclick=async()=>{try{const ids=$$('.hcot-staff').filter(x=>x.checked&&!x.disabled).map(x=>Number(x.value));const r=await api('/hcot/plans/'+id+'/participants',{method:'POST',body:JSON.stringify({staff_ids:ids})});toast(r.added+' participants added');renderHCOT(el)}catch(e){toast(e.message,true)}}
+  })
 }
 
 /* ---------------- roster ---------------- */
