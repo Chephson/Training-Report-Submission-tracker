@@ -959,7 +959,7 @@ async function renderHCOT(el) {
       toast('Draft training plan created');renderHCOT(el)
     }catch(e){toast(e.message,true)}
   }
-  $('.hcot-edit').forEach(btn=>btn.onclick=()=>{
+  $$('.hcot-edit').forEach(btn=>btn.onclick=()=>{
     const plan=plans.find(p=>p.id===Number(btn.dataset.id))
     if(!plan || plan.status!=='draft')return
     const container=$('#hcot-participants')
