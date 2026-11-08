@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - feature/hcot-unified-integration
+      - feature/hcot-stage1-roster-integration
       - fix/hcot-preview-secure-access-bootstrap
   pull_request:
     branches:
@@ -30,6 +31,8 @@ jobs:
         run: node --experimental-strip-types --test tests/hcot-p0-authorization.test.mjs
       - name: Full regression suite including HTTP authorization and no-write checks
         run: node --experimental-strip-types --experimental-loader ./tests/ts-extension-loader.mjs --test tests/*.test.mjs
+      - name: HCOT central roster regression checks
+        run: node --test tests/hcot-roster-integration.test.mjs
       - name: Multiple-submission regression tests
         run: node --experimental-strip-types --test tests/multiple-submissions.test.mjs
       - name: Microsoft Forms ingestion regression tests
