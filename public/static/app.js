@@ -945,6 +945,19 @@ async function renderHCOTSection(section) {
 
 /* HCOT unified module: draft planning only until security and synchronization are validated. */
 async function renderHCOT(el) {
+  const session=await api('/hcot/access-session')
+  const isAdmin=session.role==='admin'
+  if(!isAdmin){
+    const data=await api('/hcot/plans')
+    const plans=data.plans||[]
+    el.innerHTML='<div class="card"><div class="card-body"><p>Read-only HCOT access. Training plan changes require administrator permission.</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn hcot-tab" data-section="calendar">Calendar</button><button class="btn hcot-tab" data-section="competencies">Competencies</button></div></div></div><div id="hcot-extra" class="mt-16"></div>'+
+      '<div class="card mt-16"><div class="card-head"><h3>HCOT training plans — read only</h3></div><div class="table-wrap"><table><thead><tr><th>Training</th><th>Dates</th><th>Location</th><th>Participants</th></tr></thead><tbody>'+
+      plans.map(p=>'<tr><td>'+esc(p.title)+'</td><td>'+esc(p.start_date||'—')+' – '+esc(p.end_date||'—')+'</td><td>'+esc(p.location||'—')+'</td><td>'+p.participant_count+'</td></tr>').join('')+
+      (plans.length?'':'<tr><td colspan="4">No training plans yet.</td></tr>')+'</tbody></table></div></div>'
+    $$('.hcot-tab').forEach(btn=>btn.onclick=()=>renderHCOTSection(btn.dataset.section))
+    renderHCOTSection('calendar')
+    return
+  }
   const [data,roster]=await Promise.all([api('/hcot/plans'),api('/staff')])
   const plans=data.plans||[],staff=roster.staff||[]
   el.innerHTML='<div class="card"><div class="card-body"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn hcot-tab" data-section="calendar">Calendar</button><button class="btn hcot-tab" data-section="competencies">Competencies</button><button class="btn hcot-tab" data-section="goals">Goals & KPIs</button><button class="btn hcot-tab" data-section="reviews">Evaluations</button><button class="btn hcot-tab" data-section="costing">Costing</button><button class="btn hcot-tab" data-section="handshake">Tracker handshake</button><button class="btn hcot-tab" data-section="identity">Staff identity audit</button></div></div></div><div id="hcot-extra" class="mt-16"></div><div class="card mt-16"><div class="card-head"><div><h3>HCOT Training Monitor — Training planning</h3><p>Unified workspace preview. Draft plans do not automatically create report assignments.</p></div></div><div class="card-body"><label class="field"><span>Training programme title</span><input id="hcot-title" placeholder="Enter training title"></label><div class="grid grid-2"><label class="field"><span>Start date</span><input id="hcot-start" type="date"></label><label class="field"><span>End date</span><input id="hcot-end" type="date"></label></div><label class="field"><span>Location</span><input id="hcot-location"></label><label class="field"><span>Provider</span><input id="hcot-provider"></label><button class="btn btn-primary" id="hcot-create">Create draft training plan</button></div></div>'+
