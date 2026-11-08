@@ -253,3 +253,37 @@ test('runtime: unconfigured HCOT Preview allows first settings setup only to ver
   assert.equal(admin.status, 200)
   assert.ok(queries.some(q => q.op === 'run' && /INSERT|UPDATE/i.test(q.sql)))
 })
+
+test('runtime: Forms webhook rejects oversized payload before database access', async () => {
+  const { db, queries } = fakeDb()
+  const response = await api.request('https://example.invalid/ingest/test-webhook-token', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ notes: 'x'.repeat(256 * 1024) }),
+  }, { DB: db })
+  assert.equal(response.status, 413)
+  assert.equal((await response.json()).code, 'INGEST_PAYLOAD_LIMIT')
+  assert.equal(queries.length, 0)
+})
+
+test('runtime: settings rejects empty access code without writes', async t => {
+  const { sign, publicKey } = await signedFixture()
+  globalThis.fetch = async () => new Response(JSON.stringify({ keys: [publicKey] }), { status: 200 })
+  t.after(() => { globalThis.fetch = originalFetch })
+  const { db, queries } = fakeDb()
+  const response = await call(db, baseEnv, 'POST', '/settings',
+    await sign('admin@example.invalid'), { access_code: '  ' })
+  assert.equal(response.status, 400)
+  assert.equal((await response.json()).code, 'ACCESS_CODE_REQUIRED')
+  assert.ok(!queries.some(q => q.op === 'run'))
+})
+
+test('runtime: Forms single response remains compatible with existing token', async () => {
+  const { db } = fakeDb()
+  const response = await api.request('https://example.invalid/ingest/test-webhook-token', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'nobody@example.invalid', trainingProgramme: 'Cybersecurity' }),
+  }, { DB: db })
+  assert.equal(response.status, 200)
+  const body = await response.json()
+  assert.equal(body.received, 1)
+})
