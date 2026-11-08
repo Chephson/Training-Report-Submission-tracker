@@ -1,5 +1,8 @@
 name: HCOT Production release preflight (no deployment)
 on:
+  push:
+    branches:
+      - feature/hcot-stage1-roster-integration
   workflow_dispatch:
 
 permissions:
