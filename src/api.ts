@@ -32,6 +32,7 @@ import {
 import { seedDemo } from './lib/seed'
 import { previewHandshake } from './lib/hcot-handshake'
 import { verifyAccessJwt } from './lib/hcot-access'
+import { isHcotViewerRead } from './lib/hcot-roles'
 
 export type Env = { DB: D1Database; HCOT_ACCESS_TEAM_DOMAIN?: string; HCOT_ACCESS_AUD?: string; HCOT_SETTINGS_ADMIN_EMAILS?: string }
 const api = new Hono<{ Bindings: Env }>()
@@ -162,17 +163,11 @@ api.get('/session', async (c) => {
    All HCOT requests first pass the verified Cloudflare Access JWT gate.
    Stage 1: verified HR viewers may read only explicitly allowlisted HCOT resources.
    Every other HCOT operation (including all writes) requires a named administrator. */
-const HCOT_VIEWER_READ_PATHS = [
-  /^\/hcot\/access-session$/,
-  /^\/hcot\/plans$/,
-  /^\/hcot\/calendar$/,
-  /^\/hcot\/competencies$/,
-]
 api.use('/hcot/*', async (c, next) => {
   const path = c.req.path.replace(/^\/api/, '')
   const method = c.req.method.toUpperCase()
   // Explicit allowlist, not a broad "all GET" exception. New endpoints fail closed.
-  const viewerRead = method === 'GET' && HCOT_VIEWER_READ_PATHS.some(rule => rule.test(path))
+  const viewerRead = isHcotViewerRead(method, path)
   if (viewerRead) return next()
   const configured = c.env.HCOT_SETTINGS_ADMIN_EMAILS
   const admins = (configured || '').split(',').map(email => email.trim().toLowerCase()).filter(Boolean)
