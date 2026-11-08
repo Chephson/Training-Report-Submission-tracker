@@ -1,0 +1,56 @@
+name: HCOT Production release preflight (no deployment)
+on:
+  push:
+    branches:
+      - feature/hcot-stage1-roster-integration
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout candidate source
+        uses: actions/checkout@v4
+        with:
+          ref: 012ceb14be2724cd1cee964b1997c537be21559b
+          persist-credentials: false
+      - name: Verify exact candidate commit
+        run: test "$(git rev-parse HEAD)" = "012ceb14be2724cd1cee964b1997c537be21559b"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install and build
+        run: |
+          npm ci
+          npm run build
+          node --check public/static/app.js
+          node --test tests/hcot-roster-integration.test.mjs
+      - name: Verify Cloudflare production branch and isolated D1 bindings (read-only)
+        env:
+          PROJECT_NAME: ${{ vars.CLOUDFLARE_PAGES_PROJECT_NAME }}
+          ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$PROJECT_NAME" = "training-report-submission-tracker"
+          test -n "$ACCOUNT_ID"
+          test -n "$API_TOKEN"
+          curl --fail --silent --show-error -H "Authorization: Bearer $API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/pages/projects/$PROJECT_NAME" > /tmp/pages.json
+          jq -e '.success == true and .result.production_branch == "main"' /tmp/pages.json >/dev/null
+          jq -e --arg preview "26b2a079-accf-4d05-bf1c-c1e8ca523e1e" '
+            .result.deployment_configs.preview.d1_databases.DB as $p |
+            .result.deployment_configs.production.d1_databases.DB as $r |
+            ($p != null) and ($r != null) and
+            (($p.id // $p.database_id // "") == $preview) and
+            (($r.id // $r.database_id // "") != $preview) and
+            (($r.id // $r.database_id // "") != "")
+          ' /tmp/pages.json >/dev/null
+          echo "Preflight verified: production branch main; production D1 distinct from known preview D1."
+      - name: Release hold
+        run: |
+          echo "PRE-FLIGHT ONLY: no deployment, database writes, PR merge, or release approval."
+          echo "Remaining gates: inactive-staff Preview test, Production D1 recovery point and baseline counts, explicit user authorization."

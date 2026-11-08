@@ -664,11 +664,21 @@ api.post('/hcot/plans/:id/participants', async c => {
   if(!plan)return c.json({error:'Draft plan not found.'},404)
   const b=await c.req.json<{staff_ids?:number[]}>().catch(()=>({}))
   if(!Array.isArray(b.staff_ids)||b.staff_ids.length>500)return c.json({error:'Provide up to 500 staff IDs.'},400)
+  if(b.staff_ids.some(value=>typeof value!=='number'||!Number.isSafeInteger(value)||value<=0))
+    return c.json({error:'Every staff ID must be a positive integer from the Staff Roster.'},400)
+  const ids=b.staff_ids
+  if(new Set(ids).size!==ids.length)return c.json({error:'Duplicate staff IDs are not permitted.'},400)
+  // Validate the complete batch before writing: never silently ignore unknown or inactive staff.
+  for(const staffId of ids){
+    const staff=await c.env.DB.prepare('SELECT id,active FROM staff WHERE id=?').bind(staffId).first<{id:number;active:number}>()
+    if(!staff)return c.json({error:`Staff ID ${staffId} does not exist in the Staff Roster.`},400)
+    if(Number(staff.active)!==1)return c.json({error:`Staff ID ${staffId} is inactive and cannot receive new assignments.`},400)
+    const existing=await c.env.DB.prepare('SELECT 1 AS found FROM hcot_participants WHERE plan_id=? AND staff_id=?').bind(id,staffId).first()
+    if(existing)return c.json({error:`Staff ID ${staffId} is already assigned to this plan.`},409)
+  }
   let added=0
-  for(const staffId of new Set(b.staff_ids.map(Number).filter(Number.isInteger))){
-    const staff=await c.env.DB.prepare('SELECT id FROM staff WHERE id=?').bind(staffId).first()
-    if(!staff)continue
-    const r=await c.env.DB.prepare('INSERT OR IGNORE INTO hcot_participants (plan_id,staff_id) VALUES (?,?)').bind(id,staffId).run()
+  for(const staffId of ids){
+    const r=await c.env.DB.prepare('INSERT OR IGNORE INTO hcot_participants (plan_id,staff_id) SELECT ?,id FROM staff WHERE id=? AND active=1').bind(id,staffId).run()
     added+=r.meta.changes||0
   }
   return c.json({ok:true,added})
