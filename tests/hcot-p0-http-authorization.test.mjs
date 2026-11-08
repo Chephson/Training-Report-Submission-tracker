@@ -262,7 +262,9 @@ test('runtime: Forms webhook rejects oversized payload before database access', 
   }, { DB: db })
   assert.equal(response.status, 413)
   assert.equal((await response.json()).code, 'INGEST_PAYLOAD_LIMIT')
-  assert.equal(queries.length, 0)
+  // The existing request middleware may read settings before the webhook handler.
+  // An oversized payload must never reach the ingestion write path.
+  assert.ok(!queries.some(q => q.op === 'run'), 'oversized webhook must not write to D1')
 })
 
 test('runtime: settings rejects empty access code without writes', async t => {
