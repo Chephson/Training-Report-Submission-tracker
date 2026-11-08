@@ -23,7 +23,7 @@ async function signedFixture() {
   return { publicKey, sign }
 }
 
-function fakeDb() {
+function fakeDb(accessCode = 'test-shared-code') {
   const queries = []
   const db = {
     prepare(sql) {
@@ -36,7 +36,7 @@ function fakeDb() {
           if (sql.includes('SELECT COUNT(*) AS n FROM periods')) return { n: 1 }
           if (sql.includes('PRAGMA table_info(submissions)'))
             return null
-          if (sql.includes("key = ?") && this.args?.[0] === 'access_code') return { value: 'test-shared-code' }
+          if (sql.includes("key = ?") && this.args?.[0] === 'access_code') return accessCode ? { value: accessCode } : null
           if (sql.includes("SELECT sql FROM sqlite_master")) return { sql: 'CREATE TABLE submissions (id INTEGER)' }
           return null
         },
@@ -226,4 +226,30 @@ test('runtime: Forms webhook rejects oversized batches before recording response
   assert.equal(response.status, 413)
   assert.equal((await response.json()).code, 'INGEST_BATCH_LIMIT')
   assert.ok(!queries.some(q => /INSERT INTO (?:submissions|unmatched)/i.test(q.sql)))
+})
+
+test('runtime: unconfigured HCOT Preview denies tracker reads and writes before schema mutations', async () => {
+  const { db, queries } = fakeDb('')
+  const read = await call(db, baseEnv, 'GET', '/staff', null)
+  assert.equal(read.status, 403)
+  assert.equal((await read.json()).code, 'TRACKER_SETUP_REQUIRED')
+  const write = await call(db, baseEnv, 'POST', '/staff', null, { full_name: 'Unapproved' })
+  assert.equal(write.status, 403)
+  assert.equal((await write.json()).code, 'TRACKER_SETUP_REQUIRED')
+  assert.ok(!queries.some(q => q.op === 'run'), 'bootstrap denial must precede database writes')
+})
+
+test('runtime: unconfigured HCOT Preview allows first settings setup only to verified admin', async t => {
+  const { sign, publicKey } = await signedFixture()
+  globalThis.fetch = async () => new Response(JSON.stringify({ keys: [publicKey] }), { status: 200 })
+  t.after(() => { globalThis.fetch = originalFetch })
+  const { db, queries } = fakeDb('')
+  const viewer = await call(db, baseEnv, 'POST', '/settings',
+    await sign('viewer@example.invalid'), { access_code: 'initial-code' })
+  assert.equal(viewer.status, 403)
+  assert.ok(!queries.some(q => q.op === 'run'))
+  const admin = await call(db, baseEnv, 'POST', '/settings',
+    await sign('admin@example.invalid'), { access_code: 'initial-code' })
+  assert.equal(admin.status, 200)
+  assert.ok(queries.some(q => q.op === 'run' && /INSERT|UPDATE/i.test(q.sql)))
 })
