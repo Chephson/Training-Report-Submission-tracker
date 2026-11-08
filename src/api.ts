@@ -111,6 +111,13 @@ api.use('/*', async (c, next) => {
   }
   if (!code) {
     if (path.startsWith('/hcot/')) return c.json({ error: 'HCOT access is disabled until the tracker access code is configured.' }, 403)
+    // On HCOT-enabled Preview, bootstrap may configure the first access code
+    // through the separately verified Access-admin settings route only.
+    // Do not expose other tracker endpoints before setup completes.
+    if (c.env.HCOT_ACCESS_TEAM_DOMAIN || c.env.HCOT_ACCESS_AUD) {
+      if (path === '/settings' && c.req.method.toUpperCase() === 'POST') return next()
+      return c.json({ error: 'Tracker setup required before accessing this endpoint.', code: 'TRACKER_SETUP_REQUIRED' }, 403)
+    }
     return next()
   }
 
