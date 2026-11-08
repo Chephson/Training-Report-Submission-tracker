@@ -106,6 +106,20 @@ test('runtime: verified viewer receives 403 for HCOT writes and sensitive reads;
   assert.deepEqual(hcotWrites(queries), [])
 })
 
+test('runtime: denied HCOT viewer cannot trigger seeding, default periods or token rotation', async t => {
+  const { sign, publicKey } = await signedFixture()
+  globalThis.fetch = async () => new Response(JSON.stringify({ keys: [publicKey] }), { status: 200 })
+  t.after(() => { globalThis.fetch = originalFetch })
+  const { db, queries } = fakeDb()
+  const response = await call(db, baseEnv, 'POST', '/hcot/plans',
+    await sign('viewer@example.invalid'), { title: 'Rejected plan' })
+  assert.equal(response.status, 403)
+  const seedOrDefaultWrites = queries.filter(q => q.op === 'run' &&
+    /\\b(?:INSERT|UPDATE|DELETE)\\b/i.test(q.sql) &&
+    !/\\b(?:CREATE|ALTER)\\b/i.test(q.sql))
+  assert.deepEqual(seedOrDefaultWrites, [])
+})
+
 test('runtime: missing administrator allowlist fails closed with 503', async t => {
   const { sign, publicKey } = await signedFixture()
   globalThis.fetch = async () => new Response(JSON.stringify({ keys: [publicKey] }), { status: 200 })
