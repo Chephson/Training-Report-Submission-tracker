@@ -67,9 +67,10 @@ const protectedWrites = [
 const sensitiveReads = [
   '/hcot/plans/1/participants', '/hcot/reviews?plan_id=1', '/hcot/cost-estimates',
   '/hcot/goals', '/hcot/mapping-requests', '/hcot/handshake-preview?period=1',
-  '/hcot/plans', '/hcot/competencies', '/hcot/calendar', '/hcot/identity-audit',
+  '/hcot/identity-audit',
   '/hcot/mapping-readiness', '/hcot/mapping-exceptions', '/hcot/mapping-approval-status',
 ]
+const viewerReads = ['/hcot/plans', '/hcot/competencies', '/hcot/calendar', '/hcot/access-session']
 function call(db, env, method, path, token, body) {
   return api.request('https://example.invalid' + path, {
     method,
@@ -92,7 +93,7 @@ test('runtime: missing Access JWT denies all HCOT writes before database access'
   assert.equal(queries.length, 0)
 })
 
-test('runtime: verified viewer receives 403 for HCOT writes and sensitive reads; no HCOT mutations', async t => {
+test('runtime: verified viewer gets 200 on permitted HCOT reads, 403 on writes and sensitive reads, with zero D1 writes', async t => {
   const { sign, publicKey } = await signedFixture()
   globalThis.fetch = async () => new Response(JSON.stringify({ keys: [publicKey] }), { status: 200 })
   t.after(() => { globalThis.fetch = originalFetch })
@@ -106,7 +107,12 @@ test('runtime: verified viewer receives 403 for HCOT writes and sensitive reads;
     const response = await call(db, baseEnv, 'GET', path, token)
     assert.equal(response.status, 403, 'GET ' + path)
   }
+  for (const path of viewerReads) {
+    const response = await call(db, baseEnv, 'GET', path, token)
+    assert.equal(response.status, 200, 'GET ' + path)
+  }
   assert.deepEqual(hcotWrites(queries), [])
+  assert.deepEqual(queries.filter(q => q.op === 'run'), [], 'viewer reads and rejected operations must not write to D1')
 })
 
 test('runtime: denied HCOT viewer cannot trigger seeding, default periods or token rotation', async t => {
