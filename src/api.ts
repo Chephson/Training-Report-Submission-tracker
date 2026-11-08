@@ -105,7 +105,7 @@ api.use('/*', async (c, next) => {
     code = await getSetting(c.env.DB, 'access_code')
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    if (!/no such table:\\s*settings\\b/i.test(message)) {
+    if (!/no such table:\s*settings\b/i.test(message)) {
       return c.json({ error: 'Tracker authorization unavailable.' }, 503)
     }
   }
