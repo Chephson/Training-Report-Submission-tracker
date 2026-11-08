@@ -28,4 +28,4 @@ jobs:
       - name: HCOT P0 security regression tests
         run: node --experimental-strip-types --test tests/hcot-p0-authorization.test.mjs
       - name: Existing regression suite
-        run: node --experimental-strip-types --test tests/*.test.mjs
+        run: node --experimental-strip-types --experimental-loader ./tests/ts-extension-loader.mjs --test tests/*.test.mjs
