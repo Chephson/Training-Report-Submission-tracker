@@ -24,7 +24,8 @@ test('successful update emits a verified-actor audit entry with plan ID', () => 
 })
 test('UI offers Edit draft only for draft plans and persists via PATCH', () => {
   assert.match(ui, /p\.status==='draft'\?'<button class="btn btn-sm hcot-edit"/)
-  assert.match(ui, /\$\('\.hcot-edit'\)\.forEach/)
+  assert.match(ui, /\$\$\('\.hcot-edit'\)\.forEach/, 'Edit draft handlers must use the collection selector $$')
+  assert.doesNotMatch(ui, /(?<!\$)\$\('\.hcot-edit'\)\.forEach/, 'Do not call forEach on the single-element $ selector')
   assert.match(ui, /method:'PATCH',body:JSON\.stringify\(payload\)/)
   assert.match(ui, /renderHCOT\(el\)/)
   assert.match(ui, /hcot-edit-cancel/)
