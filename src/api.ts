@@ -917,9 +917,141 @@ api.delete('/hcot/competencies/:id', async c => {
 })
 
 /* Staff identities come exclusively from the central Staff Roster. */
+// Cadre rules are evaluated dynamically; direct staff mappings remain separate.
+api.get('/hcot/cadres', async c => {
+  const rows=await c.env.DB.prepare('SELECT id,name,active FROM hcot_cadres ORDER BY name COLLATE NOCASE').all()
+  return c.json({cadres:rows.results||[]})
+})
+api.post('/hcot/cadres', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const b=await c.req.json<{name?:string}>().catch(()=>({}))
+  const name=String(b.name||'').trim()
+  if(!name||name.length>120)return c.json({error:'Enter a valid cadre name.'},400)
+  const exists=await c.env.DB.prepare('SELECT id FROM hcot_cadres WHERE name=? COLLATE NOCASE').bind(name).first()
+  if(exists)return c.json({error:'Cadre already exists.'},409)
+  const result=await c.env.DB.prepare('INSERT INTO hcot_cadres(name) VALUES(?)').bind(name).run()
+  return c.json({ok:true,id:result.meta.last_row_id},201)
+})
+api.patch('/hcot/staff/:id/cadre', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const id=Number(c.req.param('id'))
+  const b=await c.req.json<{cadre_id?:number|null}>().catch(()=>({}))
+  if(!Number.isSafeInteger(id)||id<=0)return c.json({error:'Invalid staff ID.'},400)
+  const staff=await c.env.DB.prepare('SELECT id FROM staff WHERE id=?').bind(id).first()
+  if(!staff)return c.json({error:'Staff member not found.'},404)
+  const cadreId=b.cadre_id===null?null:Number(b.cadre_id)
+  if(cadreId!==null){
+    if(!Number.isSafeInteger(cadreId)||cadreId<=0)return c.json({error:'Select a valid cadre.'},400)
+    const cadre=await c.env.DB.prepare('SELECT id FROM hcot_cadres WHERE id=? AND active=1').bind(cadreId).first()
+    if(!cadre)return c.json({error:'Cadre not found or inactive.'},404)
+  }
+  await c.env.DB.prepare('UPDATE staff SET cadre_id=? WHERE id=?').bind(cadreId,id).run()
+  return c.json({ok:true})
+})
+api.get('/hcot/cadre-competencies', async c => {
+  const rows=await c.env.DB.prepare(`SELECT m.*,k.name AS cadre_name,p.name AS competency_name,p.category
+    FROM hcot_cadre_competencies m JOIN hcot_cadres k ON k.id=m.cadre_id
+    JOIN hcot_competencies p ON p.id=m.competency_id ORDER BY k.name COLLATE NOCASE,p.name COLLATE NOCASE`).all()
+  return c.json({rules:rows.results||[]})
+})
+api.post('/hcot/cadre-competencies', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const b=await c.req.json<{cadre_id?:number;competency_id?:number;division?:string;department?:string;unit?:string}>().catch(()=>({}))
+  const cadreId=Number(b.cadre_id),competencyId=Number(b.competency_id)
+  if(!Number.isSafeInteger(cadreId)||cadreId<=0||!Number.isSafeInteger(competencyId)||competencyId<=0)return c.json({error:'Select cadre and competency.'},400)
+  const cadre=await c.env.DB.prepare('SELECT id FROM hcot_cadres WHERE id=? AND active=1').bind(cadreId).first()
+  const comp=await c.env.DB.prepare('SELECT id,division,department,unit FROM hcot_competencies WHERE id=?').bind(competencyId).first<{id:number;division:string|null;department:string|null;unit:string|null}>()
+  if(!cadre||!comp)return c.json({error:'Cadre or competency not found.'},404)
+  const division=String(b.division||'').trim()||null,department=String(b.department||'').trim()||null,unit=String(b.unit||'').trim()||null
+  const err=await validateStaffDirectory(c.env.DB,division,department,unit)
+  if(err)return c.json({error:err},400)
+  const eq=(a:string|null,b:string|null)=>!a||!!b&&a.toLowerCase()===b.toLowerCase()
+  if(!eq(comp.division,division)||!eq(comp.department,department)||!eq(comp.unit,unit))return c.json({error:'Cadre rule must be within the competency organisational scope.'},409)
+  const result=await c.env.DB.prepare('INSERT OR IGNORE INTO hcot_cadre_competencies(cadre_id,competency_id,division,department,unit) VALUES(?,?,?,?,?)').bind(cadreId,competencyId,division,department,unit).run()
+  return c.json({ok:true,created:(result.meta.changes||0)>0},201)
+})
+api.delete('/hcot/cadre-competencies/:id', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const id=Number(c.req.param('id'))
+  if(!Number.isSafeInteger(id)||id<=0)return c.json({error:'Invalid mapping ID.'},400)
+  const result=await c.env.DB.prepare('DELETE FROM hcot_cadre_competencies WHERE id=?').bind(id).run()
+  return c.json({ok:true,deleted:(result.meta.changes||0)>0})
+})
+// Bulk import accepts parsed CSV rows. Preview performs identical validation without writes.
+api.post('/hcot/cadre-competencies/bulk', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const body=await c.req.json<{rows?:Array<Record<string,unknown>>;commit?:boolean}>().catch(()=>({}))
+  if(!Array.isArray(body.rows)||body.rows.length===0||body.rows.length>500)return c.json({error:'Supply 1–500 competency rows.'},400)
+  const cadres=(await c.env.DB.prepare('SELECT id,name FROM hcot_cadres WHERE active=1').all<{id:number;name:string}>()).results||[]
+  const existing=(await c.env.DB.prepare('SELECT id,name,category,division,department,unit FROM hcot_competencies').all<{id:number;name:string;category:string;division:string|null;department:string|null;unit:string|null}>()).results||[]
+  const norm=(x:unknown)=>String(x??'').trim()
+  const key=(x:unknown)=>norm(x).toLowerCase()
+  const errors:Array<{row:number;error:string}>=[],planned:Array<{name:string;category:string;description:string;cadreId:number;division:string|null;department:string|null;unit:string|null;existingId:number|null}>=[]
+  const seen=new Set<string>()
+  for(let i=0;i<body.rows.length;i++){
+    const row=body.rows[i]||{},name=norm(row.competency_name),category=key(row.category),cadreName=key(row.cadre)
+    const division=norm(row.division)||null,department=norm(row.department)||null,unit=norm(row.unit)||null,description=norm(row.description)
+    const cadre=cadres.find(x=>key(x.name)===cadreName)
+    const issues:string[]=[]
+    if(!name||name.length>200)issues.push('Invalid competency name')
+    if(!['core','functional'].includes(category))issues.push('Category must be core or functional')
+    if(!cadre)issues.push('Cadre not found in the active cadre directory')
+    if(description.length>2000)issues.push('Description exceeds 2000 characters')
+    const directoryError=await validateStaffDirectory(c.env.DB,division,department,unit)
+    if(directoryError)issues.push(directoryError)
+    const matching=existing.filter(x=>key(x.name)===key(name))
+    const same=matching.find(x=>key(x.category)===category&&key(x.division)===key(division)&&key(x.department)===key(department)&&key(x.unit)===key(unit))
+    if(matching.length&&!same)issues.push('Competency name already exists with a different category or scope; resolve manually')
+    const unique=[key(name),category,cadreName,key(division),key(department),key(unit)].join('|')
+    if(seen.has(unique))issues.push('Duplicate row in upload')
+    seen.add(unique)
+    if(issues.length)errors.push({row:i+2,error:issues.join('; ')})
+    else planned.push({name,category,description,cadreId:cadre!.id,division,department,unit,existingId:same?.id||null})
+  }
+  if(errors.length)return c.json({ok:false,valid:false,errors,total:body.rows.length},422)
+  if(body.commit!==true)return c.json({ok:true,valid:true,preview:planned.map((x,i)=>({row:i+2,competency:x.name,cadre:cadres.find(c=>c.id===x.cadreId)?.name,action:x.existingId?'reuse competency':'create competency',division:x.division,department:x.department,unit:x.unit})),total:planned.length})
+  // One D1 batch is transactional: a failed statement rolls back the entire import.
+  const statements=[]
+  for(const p of planned){
+    if(!p.existingId){
+      statements.push(c.env.DB.prepare('INSERT INTO hcot_competencies(name,category,division,department,unit,description) VALUES(?,?,?,?,?,?)').bind(p.name,p.category,p.division,p.department,p.unit,p.description||null))
+    }
+    statements.push(c.env.DB.prepare(`INSERT OR IGNORE INTO hcot_cadre_competencies(cadre_id,competency_id,division,department,unit)
+      SELECT ?,id,?,?,? FROM hcot_competencies WHERE name=? COLLATE NOCASE AND category=?
+      AND COALESCE(division,'')=? AND COALESCE(department,'')=? AND COALESCE(unit,'')=?
+      ORDER BY id LIMIT 1`).bind(p.cadreId,p.division,p.department,p.unit,p.name,p.category,p.division||'',p.department||'',p.unit||''))
+  }
+  await c.env.DB.batch(statements)
+  return c.json({ok:true,created_or_reused:planned.length})
+})
+
+api.get('/hcot/effective-competencies', async c => {
+  const rows=await c.env.DB.prepare(`WITH inherited AS (
+      SELECT s.id AS staff_id,m.competency_id,1 AS inherited,0 AS direct
+      FROM staff s JOIN hcot_cadre_competencies m ON m.cadre_id=s.cadre_id
+      WHERE s.active=1
+      AND (m.division IS NULL OR LOWER(TRIM(m.division))=LOWER(TRIM(COALESCE(s.team,''))))
+      AND (m.department IS NULL OR LOWER(TRIM(m.department))=LOWER(TRIM(COALESCE(s.role,''))))
+      AND (m.unit IS NULL OR LOWER(TRIM(m.unit))=LOWER(TRIM(COALESCE(s.unit,''))))
+    ), combined AS (
+      SELECT * FROM inherited UNION ALL
+      SELECT staff_id,competency_id,0 AS inherited,1 AS direct FROM hcot_staff_competencies
+    )
+    SELECT z.staff_id,z.competency_id,MAX(z.inherited) AS inherited,MAX(z.direct) AS direct,
+      s.full_name,s.email,s.cadre_id,p.name AS competency_name,p.category
+    FROM combined z JOIN staff s ON s.id=z.staff_id JOIN hcot_competencies p ON p.id=z.competency_id
+    GROUP BY z.staff_id,z.competency_id ORDER BY s.full_name COLLATE NOCASE,p.name COLLATE NOCASE`).all()
+  return c.json({mappings:rows.results||[]})
+})
+
 api.get('/hcot/competency-staff', async c => {
-  const rows=await c.env.DB.prepare(`SELECT s.id,s.full_name,s.email,s.team AS division,s.role AS department,s.unit,s.active
-    FROM staff s ORDER BY s.full_name COLLATE NOCASE`).all()
+  const rows=await c.env.DB.prepare(`SELECT s.id,s.full_name,s.email,s.team AS division,s.role AS department,s.unit,s.active,s.cadre_id,k.name AS cadre_name
+    FROM staff s LEFT JOIN hcot_cadres k ON k.id=s.cadre_id ORDER BY s.full_name COLLATE NOCASE`).all()
   return c.json({staff:rows.results||[]})
 })
 api.get('/hcot/competency-mappings', async c => {

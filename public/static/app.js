@@ -920,6 +920,70 @@ async function renderHCOTSection(section) {
         '<div class="table-wrap"><table><thead><tr><th>Staff</th><th>Competency</th><th>Action</th></tr></thead><tbody>'+
         mappings.map(m=>'<tr><td>'+esc(m.full_name)+'</td><td>'+esc(m.competency_name)+'</td><td>'+(isAdmin?'<button class="btn btn-sm hcot-map-remove" data-staff="'+m.staff_id+'" data-comp="'+m.competency_id+'">Remove</button>':'—')+'</td></tr>').join('')+
         (mappings.length?'':'<tr><td colspan="3">No staff competencies mapped.</td></tr>')+'</tbody></table></div></div>'
+      const [cadreData,ruleData,effectiveData]=await Promise.all([api('/hcot/cadres'),api('/hcot/cadre-competencies'),api('/hcot/effective-competencies')])
+      const cadres=cadreData.cadres||[],rules=ruleData.rules||[],effective=effectiveData.mappings||[]
+      const cadreLabel=id=>cadres.find(x=>String(x.id)===String(id))?.name||'Unassigned'
+      el.insertAdjacentHTML('beforeend','<div class="card mt-16"><div class="card-head"><h3>Cadre-based competency inheritance</h3></div>'+
+        (isAdmin?'<div class="card-body"><label class="field"><span>Create staff cadre</span><input id="hcot-cadre-name" placeholder="e.g. Senior Manager"></label><button class="btn" id="hcot-cadre-create">Add cadre</button><hr><label class="field"><span>Staff member</span><select id="hcot-cadre-staff">'+options(staff.map(x=>String(x.id)),'Select staff')+'</select></label><label class="field"><span>Staff cadre</span><select id="hcot-cadre-assign">'+options(cadres.filter(x=>x.active).map(x=>String(x.id)),'No cadre')+'</select></label><button class="btn" id="hcot-cadre-save">Save staff cadre</button><hr><h4>Map competency to cadre</h4><label class="field"><span>Cadre</span><select id="hcot-rule-cadre">'+options(cadres.filter(x=>x.active).map(x=>String(x.id)),'Select cadre')+'</select></label><label class="field"><span>Competency</span><select id="hcot-rule-comp">'+options(comps.map(x=>String(x.id)),'Select competency')+'</select></label><label class="field"><span>Division (optional)</span><select id="hcot-rule-division">'+options(divisions,'All divisions')+'</select></label><label class="field"><span>Department (optional)</span><select id="hcot-rule-department" disabled><option value="">All departments</option></select></label><label class="field"><span>Unit (optional)</span><select id="hcot-rule-unit" disabled><option value="">All units</option></select></label><button class="btn btn-primary" id="hcot-rule-create">Assign competency to cadre</button><hr><h4>Bulk import cadre competencies</h4><p class="tiny muted">CSV columns: competency_name,category,description,cadre,division,department,unit. Cadres must already exist. Preview checks all rows before importing.</p><button class="btn" id="hcot-bulk-template">Download CSV template</button><label class="field"><span>Upload CSV file</span><input type="file" accept=".csv,text/csv" id="hcot-bulk-file"></label><button class="btn" id="hcot-bulk-preview">Validate &amp; preview</button><div id="hcot-bulk-result" class="tiny muted"></div><button class="btn btn-primary" id="hcot-bulk-commit" disabled>Confirm bulk import</button></div>':'')+
+        '<div class="table-wrap"><table><thead><tr><th>Cadre</th><th>Competency</th><th>Division / Department / Unit</th><th>Action</th></tr></thead><tbody>'+
+        rules.map(x=>'<tr><td>'+esc(x.cadre_name)+'</td><td>'+esc(x.competency_name)+'</td><td>'+esc(orgLabel(x))+'</td><td>'+(isAdmin?'<button class="btn btn-sm hcot-rule-remove" data-id="'+x.id+'">Remove rule</button>':'—')+'</td></tr>').join('')+
+        (rules.length?'':'<tr><td colspan="4">No cadre competency rules yet.</td></tr>')+'</tbody></table></div></div>'+
+        '<div class="card mt-16"><div class="card-head"><h3>Effective staff competencies (inherited + direct)</h3></div><div class="table-wrap"><table><thead><tr><th>Staff</th><th>Cadre</th><th>Competency</th><th>Assignment source</th></tr></thead><tbody>'+
+        effective.map(x=>'<tr><td>'+esc(x.full_name)+'</td><td>'+esc(cadreLabel(x.cadre_id))+'</td><td>'+esc(x.competency_name)+'</td><td>'+(x.inherited&&x.direct?'Inherited + direct':x.inherited?'Inherited':'Direct')+'</td></tr>').join('')+
+        (effective.length?'':'<tr><td colspan="4">No effective competency assignments.</td></tr>')+'</tbody></table></div></div>')
+      if(isAdmin){
+        let validatedBulk=null
+        const parseCSV=text=>{
+          const lines=[],row=[];let field='',quoted=false
+          for(let i=0;i<text.length;i++){
+            const ch=text[i]
+            if(ch==='"'){if(quoted&&text[i+1]==='"'){field+='"';i++}else quoted=!quoted}
+            else if(ch===','&&!quoted){row.push(field);field=''}
+            else if((ch==='\\n'||ch==='\\r')&&!quoted){if(ch==='\\r'&&text[i+1]==='\\n')i++;row.push(field);if(row.some(x=>x.trim()))lines.push(row.splice(0));else row.length=0;field=''}
+            else field+=ch
+          }
+          if(quoted)throw Error('CSV contains an unclosed quoted field')
+          row.push(field);if(row.some(x=>x.trim()))lines.push(row)
+          if(lines.length<2)throw Error('CSV must include headers and at least one row')
+          const headers=lines.shift().map(x=>x.trim().toLowerCase().replace(/^\\uFEFF/,''))
+          const required=['competency_name','category','description','cadre','division','department','unit']
+          if(required.some(x=>!headers.includes(x)))throw Error('CSV missing required columns: '+required.filter(x=>!headers.includes(x)).join(', '))
+          return lines.map((cells,i)=>{if(cells.length!==headers.length)throw Error('CSV row '+(i+2)+' has the wrong number of columns');return Object.fromEntries(headers.map((h,j)=>[h,cells[j].trim()]))})
+        }
+        const bulkFile=$('#hcot-bulk-file'),bulkCommit=$('#hcot-bulk-commit'),bulkResult=$('#hcot-bulk-result')
+        $('#hcot-bulk-template').onclick=()=>{
+          const csv='competency_name,category,description,cadre,division,department,unit\r\nRegulatory Analysis,functional,Interpret regulatory data,Senior Manager,Technical Regulation,Networks,\r\n'
+          const blob=new Blob([csv],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a')
+          a.href=url;a.download='hcot-cadre-competency-template.csv';a.click();URL.revokeObjectURL(url)
+        }
+        bulkFile.onchange=()=>{validatedBulk=null;bulkCommit.disabled=true;bulkResult.textContent='Select Validate & preview to check the file.'}
+        $('#hcot-bulk-preview').onclick=async()=>{
+          try{
+            if(!bulkFile.files?.length)throw Error('Select a CSV file')
+            const rows=parseCSV(await bulkFile.files[0].text())
+            const response=await api('/hcot/cadre-competencies/bulk',{method:'POST',body:JSON.stringify({rows,commit:false})})
+            validatedBulk=rows;bulkCommit.disabled=false
+            bulkResult.textContent=response.total+' validated rows. '+response.preview.map(x=>x.competency+' → '+x.cadre+' ('+x.action+')').join('; ')
+          }catch(e){validatedBulk=null;bulkCommit.disabled=true;bulkResult.textContent=e.message;toast(e.message,true)}
+        }
+        bulkCommit.onclick=async()=>{
+          if(!validatedBulk||!confirm('Import '+validatedBulk.length+' validated cadre competency rows?'))return
+          bulkCommit.disabled=true
+          try{await api('/hcot/cadre-competencies/bulk',{method:'POST',body:JSON.stringify({rows:validatedBulk,commit:true})});toast('Bulk import completed');renderHCOTSection('competencies')}
+          catch(e){bulkResult.textContent=e.message;toast(e.message,true)}
+        }
+        const staffCadre=$('#hcot-cadre-staff'),cadreSelect=$('#hcot-cadre-assign'),ruleComp=$('#hcot-rule-comp')
+        staffCadre.querySelectorAll('option').forEach(o=>{if(o.value){const x=staff.find(st=>String(st.id)===o.value);o.textContent=x.full_name+' ('+x.email+')'}})
+        ruleComp.querySelectorAll('option').forEach(o=>{if(o.value){const x=comps.find(co=>String(co.id)===o.value);o.textContent=x.name+' — '+orgLabel(x)}})
+        staffCadre.onchange=()=>{const st=staff.find(x=>String(x.id)===staffCadre.value);cadreSelect.value=st?.cadre_id||''}
+        $('#hcot-cadre-create').onclick=async()=>{try{await api('/hcot/cadres',{method:'POST',body:JSON.stringify({name:$('#hcot-cadre-name').value})});toast('Cadre created');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
+        $('#hcot-cadre-save').onclick=async()=>{if(!staffCadre.value)return toast('Select staff',true);try{await api('/hcot/staff/'+staffCadre.value+'/cadre',{method:'PATCH',body:JSON.stringify({cadre_id:cadreSelect.value?Number(cadreSelect.value):null})});toast('Staff cadre updated');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
+        const rd=$('#hcot-rule-division'),rdept=$('#hcot-rule-department'),ru=$('#hcot-rule-unit')
+        rd.onchange=async()=>{rdept.innerHTML=options(rd.value?(await api('/staff-directory/departments?division='+encodeURIComponent(rd.value))).options||[]:[],'All departments');rdept.disabled=!rd.value;ru.innerHTML=options([],'All units');ru.disabled=true}
+        rdept.onchange=async()=>{ru.innerHTML=options(rd.value&&rdept.value?(await api('/staff-directory/units?division='+encodeURIComponent(rd.value)+'&department='+encodeURIComponent(rdept.value))).options||[]:[],'All units');ru.disabled=!rdept.value}
+        $('#hcot-rule-create').onclick=async()=>{try{await api('/hcot/cadre-competencies',{method:'POST',body:JSON.stringify({cadre_id:Number($('#hcot-rule-cadre').value),competency_id:Number(ruleComp.value),division:rd.value,department:rdept.value,unit:ru.value})});toast('Cadre competency mapped');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
+        $$('.hcot-rule-remove').forEach(btn=>btn.onclick=async()=>{if(!confirm('Remove this cadre competency rule? Staff will no longer inherit it unless another rule applies.'))return;try{await api('/hcot/cadre-competencies/'+btn.dataset.id,{method:'DELETE'});toast('Rule removed');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}})
+      }
       if(isAdmin){
         const division=$('#hcot-comp-div'),department=$('#hcot-comp-dept'),unit=$('#hcot-comp-unit')
         const refreshUnits=async()=>{
@@ -1150,6 +1214,7 @@ async function renderTrainingHistory(el) {
 async function renderRoster(el) {
   const { staff } = await api('/staff')
   state.staff = staff || []
+  state.cadres = (await api('/hcot/cadres')).cadres || []
 
   $('#topbar-actions').innerHTML = `
     <button class="btn" id="r-directory">Manage divisions, departments & units</button>
@@ -1169,7 +1234,7 @@ async function renderRoster(el) {
       ${
         staff.length
           ? `<div class="table-wrap"><table>
-              <thead><tr><th>Name</th><th>Email</th><th>Division</th><th>Department</th><th>Unit</th><th></th></tr></thead>
+              <thead><tr><th>Name</th><th>Email</th><th>Division</th><th>Department</th><th>Unit</th><th>Cadre</th><th></th></tr></thead>
               <tbody>${staff
                 .map(
                   (s) => `<tr>
@@ -1180,7 +1245,7 @@ async function renderRoster(el) {
                     <td class="tiny muted">${esc(s.email)}</td>
                     <td class="tiny muted">${esc(s.team || '—')}</td>
                     <td class="tiny muted">${esc(s.role || '—')}</td>
-                    <td class="tiny muted">${esc(s.unit || '—')}</td>
+                    <td class="tiny muted">${esc(s.unit || '—')}</td><td class="tiny muted">${esc((state.cadres||[]).find(c=>c.id===s.cadre_id)?.name||'Unassigned')}</td>
                     <td style="text-align:right;white-space:nowrap">
                       <button class="btn btn-sm btn-ghost" data-history="${s.id}">History</button>
                       <button class="btn btn-sm btn-ghost" data-edit="${s.id}">Edit</button>
@@ -1272,14 +1337,15 @@ async function staffDirectoryModal() {
 
 async function staffModal(person) {
   const p=person||{}
-  let divisions=[]
-  try{divisions=(await api('/staff-directory/divisions')).options||[]}catch(e){toast(e.message,true);return}
+  let divisions=[],cadres=[]
+  try{divisions=(await api('/staff-directory/divisions')).options||[];cadres=(await api('/hcot/cadres')).cadres||[]}catch(e){toast(e.message,true);return}
   const m=modal({title:person?'Edit staff member':'Add staff member',body:`
     <label class="field"><span>Full name</span><input id="s-name" type="text" value="${esc(p.full_name||'')}" placeholder="Full name"></label>
     <label class="field"><span>Email address</span><input id="s-email" type="email" value="${esc(p.email||'')}" placeholder="name@organisation.org"></label>
     <div class="grid grid-2"><label class="field"><span>Division</span><select id="s-team"><option value="">Select division</option>${divisions.map(name=>`<option value="${esc(name)}"${name===p.team?' selected':''}>${esc(name)}</option>`).join('')}</select></label>
     <label class="field"><span>Department</span><select id="s-role" disabled><option value="">Select a division first</option></select></label></div>
     <label class="field"><span>Unit (optional)</span><select id="s-unit" disabled><option value="">Select a department first</option></select><small>Leave blank if the department has no units or a unit does not apply.</small></label>
+    <label class="field"><span>Staff cadre</span><select id="s-cadre"><option value="">Unassigned</option>${cadres.filter(x=>x.active).map(x=>`<option value="${x.id}"${String(x.id)===String(p.cadre_id)?' selected':''}>${esc(x.name)}</option>`).join('')}</select></label>
     <p class="tiny muted">Departments depend on the division; units depend on the department. Manage choices from the Staff Roster page.</p>
     ${person?`<label class="field row" style="gap:8px"><input type="checkbox" id="s-active" style="width:auto" ${p.active?'checked':''}><span>Active — still required to submit reports</span></label>`:''}`,
     footer:`<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="s-save">${person?'Save changes':'Add to roster'}</button>`})
@@ -1313,6 +1379,7 @@ async function staffModal(person) {
     try{
       if(person)await api('/staff/'+person.id,{method:'PATCH',body:JSON.stringify(body)})
       else await api('/staff',{method:'POST',body:JSON.stringify(body)})
+      if(person && String(m.$('#s-cadre').value||'')!==String(p.cadre_id||''))await api('/hcot/staff/'+person.id+'/cadre',{method:'PATCH',body:JSON.stringify({cadre_id:m.$('#s-cadre').value?Number(m.$('#s-cadre').value):null})})
       m.close();toast(person?'Saved':'Added to roster');navigate('roster',true)
     }catch(e){toast(e.message,true)}
   })
