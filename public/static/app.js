@@ -921,7 +921,7 @@ async function renderHCOTSection(section) {
           $('#hca-group').onchange=()=>{
             const selected=$('#hca-group').value
             $('#hca-group-items').style.display=selected?'block':'none'
-            $('.hca-competency').forEach(card=>{card.style.display=card.dataset.group===selected?'block':'none'})
+            $$('.hca-competency').forEach(card=>{card.style.display=card.dataset.group===selected?'block':'none'})
           }
           $('.hca-save').forEach(btn=>btn.onclick=async()=>{
             const competencyId=Number(btn.dataset.id),input=$('.hca-score[data-id="'+competencyId+'"]'),notes=$('.hca-notes[data-id="'+competencyId+'"]')
