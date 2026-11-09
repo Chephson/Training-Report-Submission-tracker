@@ -899,7 +899,7 @@ api.post('/hcot/competency-groups/import', async c => {
   if([0,2,3,4,5,6,7].some(i=>indices[i]<0))return c.json({error:'Required columns: competency_group, competency_name, competency_category, cadre, division, department, unit.'},400)
   if(!rows.length||rows.length>1000)return c.json({error:'Include 1–1000 data rows.'},400)
   const errors:string[]=[],prepared:{group:string;description:string;competencyId:number;cadreId:number;division:string|null;department:string|null;unit:string|null}[]=[]
-  const groupCache=new Map<string,string>(),competencyCache=new Map<string,number>(),cadreCache=new Map<string,number>()
+  const groupCache=new Map<string,string>(),competencyCache=new Map<string,{id:number;category:string}>(),cadreCache=new Map<string,number>()
   for(const [i,row] of rows.entries()){
     const [group,description,competencyName,rawCategory,cadreName,div,dept,unt]=indices.map(idx=>idx<0?'':String(row[idx]||'').trim())
     const category=rawCategory.toLowerCase()
@@ -1171,16 +1171,27 @@ api.get('/hcot/competency-assessments', async c => {
       AND (m.division IS NULL OR LOWER(TRIM(m.division))=LOWER(TRIM(COALESCE(s.team,''))))
       AND (m.department IS NULL OR LOWER(TRIM(m.department))=LOWER(TRIM(COALESCE(s.role,''))))
       AND (m.unit IS NULL OR LOWER(TRIM(m.unit))=LOWER(TRIM(COALESCE(s.unit,''))))
+    ), group_inherited AS (
+      SELECT gc.competency_id,1 AS inherited,0 AS direct
+      FROM staff s
+      JOIN hcot_group_competencies gc ON 1=1
+      WHERE s.id=? AND s.active=1 AND (
+        EXISTS(SELECT 1 FROM hcot_cadre_groups cg WHERE cg.cadre_id=s.cadre_id AND cg.group_id=gc.group_id)
+        OR EXISTS(SELECT 1 FROM hcot_cadre_group_scopes gs WHERE gs.cadre_id=s.cadre_id AND gs.group_id=gc.group_id
+          AND (gs.division IS NULL OR LOWER(TRIM(gs.division))=LOWER(TRIM(COALESCE(s.team,''))))
+          AND (gs.department IS NULL OR LOWER(TRIM(gs.department))=LOWER(TRIM(COALESCE(s.role,''))))
+          AND (gs.unit IS NULL OR LOWER(TRIM(gs.unit))=LOWER(TRIM(COALESCE(s.unit,'')))))
+      )
     ), direct AS (
       SELECT d.competency_id,0 AS inherited,1 AS direct
       FROM hcot_staff_competencies d JOIN staff s ON s.id=d.staff_id
       WHERE d.staff_id=? AND s.active=1
-    ), combined AS (SELECT * FROM inherited UNION ALL SELECT * FROM direct)
+    ), combined AS (SELECT * FROM inherited UNION ALL SELECT * FROM group_inherited UNION ALL SELECT * FROM direct)
     SELECT p.id,p.name,p.category,MAX(z.inherited) AS inherited,MAX(z.direct) AS direct,gg.group_id,g.name AS group_name
     FROM combined z JOIN hcot_competencies p ON p.id=z.competency_id
     LEFT JOIN hcot_group_competencies gg ON gg.competency_id=p.id
     LEFT JOIN hcot_competency_groups g ON g.id=gg.group_id
-    GROUP BY p.id,p.name,p.category,gg.group_id,g.name ORDER BY p.name COLLATE NOCASE`).bind(staffId,staffId).all()
+    GROUP BY p.id,p.name,p.category,gg.group_id,g.name ORDER BY p.name COLLATE NOCASE`).bind(staffId,staffId,staffId).all()
   const history=await c.env.DB.prepare(`SELECT a.*,p.name AS competency_name,p.category FROM hcot_competency_assessments a
     JOIN hcot_competencies p ON p.id=a.competency_id WHERE a.staff_id=?
     ORDER BY a.assessed_at DESC,a.id DESC LIMIT 500`).bind(staffId).all()
@@ -1202,7 +1213,15 @@ api.post('/hcot/competency-assessments', async c => {
         AND (m.division IS NULL OR LOWER(TRIM(m.division))=LOWER(TRIM(COALESCE(s.team,''))))
         AND (m.department IS NULL OR LOWER(TRIM(m.department))=LOWER(TRIM(COALESCE(s.role,''))))
         AND (m.unit IS NULL OR LOWER(TRIM(m.unit))=LOWER(TRIM(COALESCE(s.unit,'')))))
-    ) LIMIT 1`).bind(staffId,competencyId,competencyId).first()
+      OR EXISTS(SELECT 1 FROM hcot_group_competencies gc
+        WHERE gc.competency_id=? AND (
+          EXISTS(SELECT 1 FROM hcot_cadre_groups cg WHERE cg.cadre_id=s.cadre_id AND cg.group_id=gc.group_id)
+          OR EXISTS(SELECT 1 FROM hcot_cadre_group_scopes gs WHERE gs.cadre_id=s.cadre_id AND gs.group_id=gc.group_id
+            AND (gs.division IS NULL OR LOWER(TRIM(gs.division))=LOWER(TRIM(COALESCE(s.team,''))))
+            AND (gs.department IS NULL OR LOWER(TRIM(gs.department))=LOWER(TRIM(COALESCE(s.role,''))))
+            AND (gs.unit IS NULL OR LOWER(TRIM(gs.unit))=LOWER(TRIM(COALESCE(s.unit,'')))))
+        ))
+    ) LIMIT 1`).bind(staffId,competencyId,competencyId,competencyId).first()
   if(!eligible)return c.json({error:'Competency is not currently mapped to this staff member.'},409)
   const result=await c.env.DB.prepare(`INSERT INTO hcot_competency_assessments(staff_id,competency_id,cycle,score,target_score,assessor_email,notes)
     VALUES(?,?,?,?,?,?,?)`).bind(staffId,competencyId,cycle,score,target,session.email,notes||null).run()
