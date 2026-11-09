@@ -8,6 +8,7 @@ export type Staff = {
   email: string
   team: string | null
   role: string | null
+  unit: string | null
   active: number
 }
 
