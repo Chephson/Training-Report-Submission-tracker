@@ -14,6 +14,20 @@ const SCHEMA = [
      id INTEGER PRIMARY KEY AUTOINCREMENT, full_name TEXT NOT NULL,
      email TEXT NOT NULL UNIQUE COLLATE NOCASE, team TEXT, role TEXT,
      active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS staff_divisions (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS staff_departments (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL COLLATE NOCASE,
+     division_name TEXT NOT NULL COLLATE NOCASE,
+     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+     UNIQUE(division_name, name))`,
+  `CREATE TABLE IF NOT EXISTS staff_units (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL COLLATE NOCASE,
+     division_name TEXT NOT NULL COLLATE NOCASE,
+     department_name TEXT NOT NULL COLLATE NOCASE,
+     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+     UNIQUE(division_name, department_name, name))`,
   `CREATE TABLE IF NOT EXISTS submissions (
      id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL, period_id INTEGER NOT NULL,
      source TEXT NOT NULL DEFAULT 'form', form_response_id TEXT, matched_by TEXT,
@@ -104,6 +118,10 @@ export function ensureSchema(db: D1Database): Promise<void> {
   if (ready) return ready
   ready = (async () => {
     for (const stmt of SCHEMA) await db.prepare(stmt).run()
+    const staffCols = await db.prepare('PRAGMA table_info(staff)').all<{ name: string }>()
+    if (!(staffCols.results ?? []).some(c => c.name === 'unit')) {
+      await db.prepare('ALTER TABLE staff ADD COLUMN unit TEXT').run()
+    }
     // Upgrade existing installations without losing historical submissions.
     const cols = await db.prepare('PRAGMA table_info(submissions)').all<{ name: string }>()
     if (!(cols.results ?? []).some((c) => c.name === 'training_programme')) {
