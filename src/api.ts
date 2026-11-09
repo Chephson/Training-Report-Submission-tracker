@@ -255,77 +255,101 @@ api.delete('/periods/:id', async (c) => {
   return c.json({ ok: true })
 })
 
-/* ---------------- staff organisational directory ---------------- */
-// Existing staff.team and staff.role are retained as storage for Division and
-// Department respectively, preserving all existing staff/HCOT foreign keys.
-const staffDirectoryKinds = {
-  divisions: { table: 'staff_divisions', column: 'team' },
-  departments: { table: 'staff_departments', column: 'role' },
-} as const
-
-type DirectoryKind = keyof typeof staffDirectoryKinds
-function directoryKind(kind: string) {
-  return Object.prototype.hasOwnProperty.call(staffDirectoryKinds, kind)
-    ? staffDirectoryKinds[kind as DirectoryKind] : null
-}
-
-api.get('/staff-directory/:kind', async (c) => {
-  const cfg = directoryKind(c.req.param('kind'))
-  if (!cfg) return c.json({ error: 'Unknown directory type.' }, 404)
-  const rows = await c.env.DB.prepare(
-    `SELECT name FROM ${cfg.table} UNION SELECT DISTINCT TRIM(${cfg.column}) AS name FROM staff WHERE ${cfg.column} IS NOT NULL AND TRIM(${cfg.column}) <> '' ORDER BY name COLLATE NOCASE`
-  ).all<{ name: string }>()
-  return c.json({ options: (rows.results ?? []).map(r => r.name) })
+/* ---------------- division-scoped staff directory ---------------- */
+// Existing staff.team / staff.role store division / department respectively.
+// Preserve staff IDs, historical reports and HCOT foreign keys.
+api.get('/staff-directory/divisions', async c => {
+  const rows = await c.env.DB.prepare(`SELECT name FROM staff_divisions UNION SELECT DISTINCT TRIM(team) AS name FROM staff WHERE team IS NOT NULL AND TRIM(team) <> '' ORDER BY name COLLATE NOCASE`).all<{name:string}>()
+  return c.json({ options:(rows.results ?? []).map(r=>r.name) })
 })
-
-api.post('/staff-directory/:kind', async (c) => {
-  const cfg = directoryKind(c.req.param('kind'))
-  if (!cfg) return c.json({ error: 'Unknown directory type.' }, 404)
-  const body = await c.req.json<{ name?: string }>()
-  const name = String(body.name ?? '').trim()
-  if (!name || name.length > 120) return c.json({ error: 'Enter a name of 1–120 characters.' }, 400)
-  const existing = await c.env.DB.prepare(`SELECT 1 AS found FROM ${cfg.table} WHERE name = ? COLLATE NOCASE UNION SELECT 1 AS found FROM staff WHERE ${cfg.column} = ? COLLATE NOCASE LIMIT 1`).bind(name,name).first()
-  if (existing) return c.json({ error: 'This name already exists.' }, 409)
-  await c.env.DB.prepare(`INSERT INTO ${cfg.table} (name) VALUES (?)`).bind(name).run()
-  return c.json({ ok: true }, 201)
+api.get('/staff-directory/departments', async c => {
+  const division = String(c.req.query('division') ?? '').trim()
+  if (!division) return c.json({ error:'Select a division first.' },400)
+  const rows = await c.env.DB.prepare(`SELECT name FROM staff_departments WHERE division_name = ? COLLATE NOCASE UNION SELECT DISTINCT TRIM(role) AS name FROM staff WHERE team = ? COLLATE NOCASE AND role IS NOT NULL AND TRIM(role) <> '' ORDER BY name COLLATE NOCASE`).bind(division,division).all<{name:string}>()
+  return c.json({ options:(rows.results ?? []).map(r=>r.name) })
 })
-
-api.patch('/staff-directory/:kind', async (c) => {
-  const cfg = directoryKind(c.req.param('kind'))
-  if (!cfg) return c.json({ error: 'Unknown directory type.' }, 404)
-  const body = await c.req.json<{ old_name?: string; name?: string }>()
-  const oldName = String(body.old_name ?? '').trim(), name = String(body.name ?? '').trim()
-  if (!oldName || !name || name.length > 120) return c.json({ error: 'Valid old and new names are required.' }, 400)
-  const existing = await c.env.DB.prepare(`SELECT 1 AS found FROM ${cfg.table} WHERE name = ? COLLATE NOCASE UNION SELECT 1 AS found FROM staff WHERE ${cfg.column} = ? COLLATE NOCASE LIMIT 1`).bind(oldName,oldName).first()
-  if (!existing) return c.json({ error: 'Directory entry not found.' }, 404)
-  if (oldName.toLowerCase() !== name.toLowerCase()) {
-    const conflict = await c.env.DB.prepare(`SELECT 1 AS found FROM ${cfg.table} WHERE name = ? COLLATE NOCASE UNION SELECT 1 AS found FROM staff WHERE ${cfg.column} = ? COLLATE NOCASE LIMIT 1`).bind(name,name).first()
-    if (conflict) return c.json({ error: 'The new name already exists.' }, 409)
+api.post('/staff-directory/divisions', async c => {
+  const {name:raw} = await c.req.json<{name?:string}>()
+  const name=String(raw ?? '').trim()
+  if (!name || name.length>120) return c.json({error:'Division name must contain 1–120 characters.'},400)
+  const found=await c.env.DB.prepare(`SELECT name FROM staff_divisions WHERE name=? COLLATE NOCASE UNION SELECT team AS name FROM staff WHERE team=? COLLATE NOCASE LIMIT 1`).bind(name,name).first()
+  if(found) return c.json({error:'Division already exists.'},409)
+  await c.env.DB.prepare('INSERT INTO staff_divisions(name) VALUES(?)').bind(name).run()
+  return c.json({ok:true},201)
+})
+api.post('/staff-directory/departments', async c => {
+  const body=await c.req.json<{name?:string;division?:string}>()
+  const name=String(body.name ?? '').trim(), division=String(body.division ?? '').trim()
+  if(!name || name.length>120 || !division) return c.json({error:'Choose a division and enter a department name (1–120 characters).'},400)
+  const valid=await c.env.DB.prepare(`SELECT name FROM staff_divisions WHERE name=? COLLATE NOCASE UNION SELECT team AS name FROM staff WHERE team=? COLLATE NOCASE LIMIT 1`).bind(division,division).first()
+  if(!valid) return c.json({error:'Division does not exist.'},400)
+  const found=await c.env.DB.prepare(`SELECT name FROM staff_departments WHERE division_name=? COLLATE NOCASE AND name=? COLLATE NOCASE UNION SELECT role AS name FROM staff WHERE team=? COLLATE NOCASE AND role=? COLLATE NOCASE LIMIT 1`).bind(division,name,division,name).first()
+  if(found) return c.json({error:'Department already exists in this division.'},409)
+  await c.env.DB.prepare('INSERT INTO staff_departments(division_name,name) VALUES(?,?)').bind(division,name).run()
+  return c.json({ok:true},201)
+})
+api.patch('/staff-directory/divisions', async c => {
+  const b=await c.req.json<{old_name?:string;name?:string}>()
+  const old=String(b.old_name ?? '').trim(),name=String(b.name ?? '').trim()
+  if(!old || !name || name.length>120) return c.json({error:'Valid division names are required.'},400)
+  const exists=await c.env.DB.prepare(`SELECT name FROM staff_divisions WHERE name=? COLLATE NOCASE UNION SELECT team AS name FROM staff WHERE team=? COLLATE NOCASE LIMIT 1`).bind(old,old).first()
+  if(!exists) return c.json({error:'Division not found.'},404)
+  if(old.toLowerCase()!==name.toLowerCase()){
+    const conflict=await c.env.DB.prepare(`SELECT name FROM staff_divisions WHERE name=? COLLATE NOCASE UNION SELECT team AS name FROM staff WHERE team=? COLLATE NOCASE LIMIT 1`).bind(name,name).first()
+    if(conflict) return c.json({error:'Division already exists.'},409)
   }
-  await c.env.DB.prepare(`UPDATE staff SET ${cfg.column} = ? WHERE ${cfg.column} = ? COLLATE NOCASE`).bind(name,oldName).run()
-  await c.env.DB.prepare(`DELETE FROM ${cfg.table} WHERE name = ? COLLATE NOCASE`).bind(oldName).run()
-  await c.env.DB.prepare(`INSERT OR IGNORE INTO ${cfg.table} (name) VALUES (?)`).bind(name).run()
-  return c.json({ ok: true })
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE staff SET team=? WHERE team=? COLLATE NOCASE').bind(name,old),
+    c.env.DB.prepare('UPDATE staff_departments SET division_name=? WHERE division_name=? COLLATE NOCASE').bind(name,old),
+    c.env.DB.prepare('DELETE FROM staff_divisions WHERE name=? COLLATE NOCASE').bind(old),
+    c.env.DB.prepare('INSERT OR IGNORE INTO staff_divisions(name) VALUES(?)').bind(name),
+  ])
+  return c.json({ok:true})
+})
+api.patch('/staff-directory/departments', async c => {
+  const b=await c.req.json<{old_name?:string;name?:string;division?:string}>()
+  const old=String(b.old_name ?? '').trim(),name=String(b.name ?? '').trim(),division=String(b.division ?? '').trim()
+  if(!old || !name || name.length>120 || !division) return c.json({error:'Division and valid department names required.'},400)
+  const exists=await c.env.DB.prepare(`SELECT name FROM staff_departments WHERE division_name=? COLLATE NOCASE AND name=? COLLATE NOCASE UNION SELECT role AS name FROM staff WHERE team=? COLLATE NOCASE AND role=? COLLATE NOCASE LIMIT 1`).bind(division,old,division,old).first()
+  if(!exists) return c.json({error:'Department not found in selected division.'},404)
+  if(old.toLowerCase()!==name.toLowerCase()){
+    const conflict=await c.env.DB.prepare(`SELECT name FROM staff_departments WHERE division_name=? COLLATE NOCASE AND name=? COLLATE NOCASE UNION SELECT role AS name FROM staff WHERE team=? COLLATE NOCASE AND role=? COLLATE NOCASE LIMIT 1`).bind(division,name,division,name).first()
+    if(conflict) return c.json({error:'Department already exists in this division.'},409)
+  }
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE staff SET role=? WHERE team=? COLLATE NOCASE AND role=? COLLATE NOCASE').bind(name,division,old),
+    c.env.DB.prepare('DELETE FROM staff_departments WHERE division_name=? COLLATE NOCASE AND name=? COLLATE NOCASE').bind(division,old),
+    c.env.DB.prepare('INSERT OR IGNORE INTO staff_departments(division_name,name) VALUES(?,?)').bind(division,name),
+  ])
+  return c.json({ok:true})
+})
+api.delete('/staff-directory/divisions', async c => {
+  const name=String(c.req.query('name') ?? '').trim()
+  if(!name) return c.json({error:'Division name required.'},400)
+  const used=await c.env.DB.prepare('SELECT id FROM staff WHERE team=? COLLATE NOCASE LIMIT 1').bind(name).first()
+  const child=await c.env.DB.prepare('SELECT id FROM staff_departments WHERE division_name=? COLLATE NOCASE LIMIT 1').bind(name).first()
+  if(used || child) return c.json({error:'Reassign staff and remove linked departments before deleting this division.'},409)
+  const res=await c.env.DB.prepare('DELETE FROM staff_divisions WHERE name=? COLLATE NOCASE').bind(name).run()
+  return res.meta.changes ? c.json({ok:true}) : c.json({error:'Division not found.'},404)
+})
+api.delete('/staff-directory/departments', async c => {
+  const name=String(c.req.query('name') ?? '').trim(),division=String(c.req.query('division') ?? '').trim()
+  if(!name || !division) return c.json({error:'Division and department required.'},400)
+  const used=await c.env.DB.prepare('SELECT id FROM staff WHERE team=? COLLATE NOCASE AND role=? COLLATE NOCASE LIMIT 1').bind(division,name).first()
+  if(used) return c.json({error:'Reassign staff before deleting this department.'},409)
+  const res=await c.env.DB.prepare('DELETE FROM staff_departments WHERE division_name=? COLLATE NOCASE AND name=? COLLATE NOCASE').bind(division,name).run()
+  return res.meta.changes ? c.json({ok:true}) : c.json({error:'Department not found.'},404)
 })
 
-api.delete('/staff-directory/:kind', async (c) => {
-  const cfg = directoryKind(c.req.param('kind'))
-  if (!cfg) return c.json({ error: 'Unknown directory type.' }, 404)
-  const name = String(c.req.query('name') ?? '').trim()
-  if (!name) return c.json({ error: 'Directory entry name is required.' }, 400)
-  const inUse = await c.env.DB.prepare(`SELECT 1 AS found FROM staff WHERE ${cfg.column} = ? COLLATE NOCASE LIMIT 1`).bind(name).first()
-  if (inUse) return c.json({ error: 'This entry is assigned to staff. Reassign them before deleting it.' }, 409)
-  const result = await c.env.DB.prepare(`DELETE FROM ${cfg.table} WHERE name = ? COLLATE NOCASE`).bind(name).run()
-  if (!result.meta.changes) return c.json({ error: 'Directory entry not found.' }, 404)
-  return c.json({ ok: true })
-})
-
-async function validateStaffDirectory(db: D1Database, division: string | null, department: string | null) {
-  for (const [kind, name] of [['divisions', division], ['departments', department]] as const) {
-    if (!name) continue
-    const cfg = staffDirectoryKinds[kind]
-    const found = await db.prepare(`SELECT 1 AS found FROM ${cfg.table} WHERE name = ? COLLATE NOCASE UNION SELECT 1 AS found FROM staff WHERE ${cfg.column} = ? COLLATE NOCASE LIMIT 1`).bind(name,name).first()
-    if (!found) return `Select a valid ${kind === 'divisions' ? 'division' : 'department'} from the directory.`
+async function validateStaffDirectory(db:D1Database, division:string|null, department:string|null){
+  if(department && !division) return 'Select a division before choosing a department.'
+  if(division){
+    const valid=await db.prepare(`SELECT name FROM staff_divisions WHERE name=? COLLATE NOCASE UNION SELECT team AS name FROM staff WHERE team=? COLLATE NOCASE LIMIT 1`).bind(division,division).first()
+    if(!valid) return 'Select a valid division from the directory.'
+  }
+  if(department){
+    const valid=await db.prepare(`SELECT name FROM staff_departments WHERE division_name=? COLLATE NOCASE AND name=? COLLATE NOCASE UNION SELECT role AS name FROM staff WHERE team=? COLLATE NOCASE AND role=? COLLATE NOCASE LIMIT 1`).bind(division,department,division,department).first()
+    if(!valid) return 'Department must belong to the selected division.'
   }
   return null
 }
