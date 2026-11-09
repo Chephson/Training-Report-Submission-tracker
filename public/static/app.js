@@ -1250,7 +1250,7 @@ async function renderRoster(el) {
     <button class="btn btn-primary" id="r-add">${ico('plus', 15)} Add staff member</button>`
 
   $('#r-template').addEventListener('click', () => {
-    const csv='\\uFEFFfull_name,email,division,department,unit\\r\\n'
+    const csv='\uFEFFfull_name,email,division,department,unit\r\n'
     const blob=new Blob([csv],{type:'text/csv;charset=utf-8'})
     const url=URL.createObjectURL(blob)
     const link=document.createElement('a')
