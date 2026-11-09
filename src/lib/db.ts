@@ -79,6 +79,19 @@ const SCHEMA = [
      PRIMARY KEY(staff_id, competency_id),
      FOREIGN KEY(staff_id) REFERENCES staff(id) ON DELETE CASCADE,
      FOREIGN KEY(competency_id) REFERENCES hcot_competencies(id) ON DELETE CASCADE)`,
+  `CREATE TABLE IF NOT EXISTS hcot_cadres (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+     active INTEGER NOT NULL DEFAULT 1,
+     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS hcot_cadre_competencies (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     cadre_id INTEGER NOT NULL, competency_id INTEGER NOT NULL,
+     division TEXT, department TEXT, unit TEXT,
+     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+     FOREIGN KEY(cadre_id) REFERENCES hcot_cadres(id),
+     FOREIGN KEY(competency_id) REFERENCES hcot_competencies(id) ON DELETE CASCADE)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_hcot_cadre_competency_scope
+     ON hcot_cadre_competencies(cadre_id,competency_id,COALESCE(division,''),COALESCE(department,''),COALESCE(unit,''))`,
   `CREATE TABLE IF NOT EXISTS hcot_goals (
      id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
      scope TEXT NOT NULL DEFAULT 'unit', owner_label TEXT,
@@ -128,6 +141,8 @@ export function ensureSchema(db: D1Database): Promise<void> {
     if (!(staffCols.results ?? []).some(c => c.name === 'unit')) {
       await db.prepare('ALTER TABLE staff ADD COLUMN unit TEXT').run()
     }
+    const cadreCols=await db.prepare('PRAGMA table_info(staff)').all<{name:string}>()
+    if(!(cadreCols.results??[]).some(c=>c.name==='cadre_id')) await db.prepare('ALTER TABLE staff ADD COLUMN cadre_id INTEGER REFERENCES hcot_cadres(id)').run()
     const competencyCols=await db.prepare('PRAGMA table_info(hcot_competencies)').all<{name:string}>()
     if(!(competencyCols.results??[]).some(c=>c.name==='department')) await db.prepare('ALTER TABLE hcot_competencies ADD COLUMN department TEXT').run()
     // Upgrade existing installations without losing historical submissions.
