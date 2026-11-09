@@ -1028,6 +1028,17 @@ async function renderHCOTSection(section) {
         $$('.hcot-rule-remove').forEach(btn=>btn.onclick=async()=>{if(!confirm('Remove this cadre competency rule? Staff will no longer inherit it unless another rule applies.'))return;try{await api('/hcot/cadre-competencies/'+btn.dataset.id,{method:'DELETE'});toast('Rule removed');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}})
       }
       if(isAdmin){
+        const scopeDivision=$('#hcg-scope-div'),scopeDepartment=$('#hcg-scope-dept'),scopeUnit=$('#hcg-scope-unit')
+        const updateScopeUnits=async()=>{
+          scopeUnit.innerHTML=options(scopeDivision.value&&scopeDepartment.value?(await api('/staff-directory/units?division='+encodeURIComponent(scopeDivision.value)+'&department='+encodeURIComponent(scopeDepartment.value))).options||[]:[],'All units')
+          scopeUnit.disabled=!scopeDepartment.value
+        }
+        scopeDivision.onchange=async()=>{
+          scopeDepartment.innerHTML=options(scopeDivision.value?(await api('/staff-directory/departments?division='+encodeURIComponent(scopeDivision.value))).options||[]:[],'All departments')
+          scopeDepartment.disabled=!scopeDivision.value
+          await updateScopeUnits()
+        }
+        scopeDepartment.onchange=updateScopeUnits
         $('#hcg-create').onclick=async()=>{try{await api('/hcot/competency-groups',{method:'POST',body:JSON.stringify({name:$('#hcg-name').value})});toast('Group created');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
         $('#hcg-link-comp').onclick=async()=>{try{await api('/hcot/competency-groups/assign-competency',{method:'POST',body:JSON.stringify({group_id:Number($('#hcg-comp-group').value),competency_id:Number($('#hcg-comp').value)})});toast('Competency added to group');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
         $('#hcg-link-cadre').onclick=async()=>{try{await api('/hcot/competency-groups/assign-cadre',{method:'POST',body:JSON.stringify({group_id:Number($('#hcg-cadre-group').value),cadre_id:Number($('#hcg-cadre').value),division:$('#hcg-scope-div').value,department:$('#hcg-scope-dept').value,unit:$('#hcg-scope-unit').value})});toast('Group linked to cadre');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
