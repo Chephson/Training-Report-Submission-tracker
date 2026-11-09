@@ -1250,7 +1250,7 @@ async function renderRoster(el) {
     <button class="btn btn-primary" id="r-add">${ico('plus', 15)} Add staff member</button>`
 
   $('#r-template').addEventListener('click', () => {
-    const csv='\uFEFFfull_name,email,division,department,unit\r\n'
+    const csv='\uFEFFfull_name,email,division,department,unit,cadre\r\n'
     const blob=new Blob([csv],{type:'text/csv;charset=utf-8'})
     const url=URL.createObjectURL(blob)
     const link=document.createElement('a')
@@ -1426,7 +1426,7 @@ function rosterImportModal() {
   const m = modal({
     title: 'Import staff list',
     body: `
-      <p class="tiny muted mb-12">Paste a CSV, or upload a file. It needs <strong>full_name</strong> and <strong>email</strong> columns; <em>division</em>, <em>department</em> and <em>unit</em> are optional. Division/department/unit values must already exist in the staff directory.</p>
+      <p class="tiny muted mb-12">Paste a CSV, or upload a file. It needs <strong>full_name</strong> and <strong>email</strong> columns; <em>division</em>, <em>department</em>, <em>unit</em> and <em>cadre</em> are optional. Division/department/unit values must already exist in the staff directory; cadre names must match active HCOT cadres.</p>
       <div class="row mb-12" style="gap:8px">
         <button class="btn btn-sm" id="pick-file">Choose file…</button>
         <span class="tiny muted" id="file-label">No file chosen</span>
