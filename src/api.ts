@@ -886,6 +886,66 @@ api.post('/hcot/competency-groups', async c => {
   try {const x=await c.env.DB.prepare('INSERT INTO hcot_competency_groups(name,description) VALUES (?,?)').bind(name,description||null).run();return c.json({ok:true,id:x.meta.last_row_id},201)}
   catch{return c.json({error:'Competency group already exists or could not be saved.'},409)}
 })
+api.post('/hcot/competency-groups/import', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const csv=await c.req.text()
+  if(csv.length>1000000)return c.json({error:'CSV exceeds 1 MB.'},413)
+  const {headers,rows}=parseDelimited(csv)
+  const keys=['competency_group','group_description','competency_name','cadre','division','department','unit']
+  const indices=keys.map(k=>headers.findIndex(h=>h.trim().toLowerCase().replace(/\\s+/g,'_')===k))
+  if(indices[0]<0||indices[2]<0||indices[3]<0)return c.json({error:'Required columns: competency_group, competency_name, cadre.'},400)
+  if(!rows.length||rows.length>1000)return c.json({error:'Include 1–1000 data rows.'},400)
+  const errors:string[]=[],prepared:{group:string;description:string;competencyId:number;cadreId:number;division:string|null;department:string|null;unit:string|null}[]=[]
+  const groupCache=new Map<string,string>(),competencyCache=new Map<string,number>(),cadreCache=new Map<string,number>()
+  for(const [i,row] of rows.entries()){
+    const [group,description,competencyName,cadreName,div,dept,unt]=indices.map(idx=>idx<0?'':String(row[idx]||'').trim())
+    if(!group||group.length>150||description.length>1000||!competencyName||!cadreName){errors.push(`Row ${i+2}: group, competency and cadre are required; group name must be at most 150 characters.`);continue}
+    const key=group.toLowerCase(),old=groupCache.get(key)
+    if(old!==undefined&&old!==description){errors.push(`Row ${i+2}: conflicting descriptions for group "${group}".`);continue}
+    groupCache.set(key,description)
+    const compKey=competencyName.toLowerCase(),cadreKey=cadreName.toLowerCase()
+    if(!competencyCache.has(compKey)){
+      const comp=await c.env.DB.prepare('SELECT id FROM hcot_competencies WHERE LOWER(TRIM(name))=LOWER(TRIM(?))').bind(competencyName).all<{id:number}>()
+      if(comp.results.length!==1){errors.push(`Row ${i+2}: competency "${competencyName}" must match exactly one existing competency.`);continue}
+      competencyCache.set(compKey,comp.results[0].id)
+    }
+    if(!cadreCache.has(cadreKey)){
+      const cadre=await c.env.DB.prepare('SELECT id FROM hcot_cadres WHERE active=1 AND LOWER(TRIM(name))=LOWER(TRIM(?))').bind(cadreName).first<{id:number}>()
+      if(!cadre){errors.push(`Row ${i+2}: cadre "${cadreName}" does not exist or is inactive.`);continue}
+      cadreCache.set(cadreKey,cadre.id)
+    }
+    if((dept&&!div)||(unt&&!dept)){errors.push(`Row ${i+2}: division is required for department, and department is required for unit.`);continue}
+    const scopeError=await validateStaffDirectory(c.env.DB,div||null,dept||null,unt||null)
+    if(scopeError){errors.push(`Row ${i+2}: ${scopeError}`);continue}
+    prepared.push({group,description,competencyId:competencyCache.get(compKey)!,cadreId:cadreCache.get(cadreKey)!,division:div||null,department:dept||null,unit:unt||null})
+  }
+  if(errors.length)return c.json({error:'Import rejected; no rows applied.',errors:errors.slice(0,100),error_count:errors.length},400)
+  // Never silently move a competency already belonging to another group.
+  const ownership=new Map<number,string>()
+  for(const p of prepared){const prev=ownership.get(p.competencyId);if(prev&&prev!==p.group.toLowerCase())errors.push(`Competency ID ${p.competencyId} appears in multiple groups.`);ownership.set(p.competencyId,p.group.toLowerCase())}
+  for(const [compId,groupKey] of ownership){
+    const old=await c.env.DB.prepare('SELECT g.name FROM hcot_group_competencies gc JOIN hcot_competency_groups g ON g.id=gc.group_id WHERE gc.competency_id=?').bind(compId).first<{name:string}>()
+    if(old&&old.name.toLowerCase()!==groupKey)errors.push(`Competency ID ${compId} is already assigned to group "${old.name}".`)
+  }
+  if(errors.length)return c.json({error:'Conflicting group assignments; no rows applied.',errors},409)
+  const statements=[]
+  for(const [group,description] of groupCache){
+    const original=prepared.find(p=>p.group.toLowerCase()===group)!.group
+    statements.push(c.env.DB.prepare('INSERT OR IGNORE INTO hcot_competency_groups(name,description) VALUES (?,?)').bind(original,description||null))
+  }
+  await c.env.DB.batch(statements)
+  const ids=new Map<string,number>()
+  for(const p of prepared){const key=p.group.toLowerCase();if(!ids.has(key)){const found=await c.env.DB.prepare('SELECT id FROM hcot_competency_groups WHERE LOWER(name)=LOWER(?)').bind(p.group).first<{id:number}>();if(!found)return c.json({error:'Unable to resolve imported group.'},500);ids.set(key,found.id)}}
+  const writes=[]
+  for(const p of prepared){const gid=ids.get(p.group.toLowerCase())!
+    writes.push(c.env.DB.prepare('INSERT OR IGNORE INTO hcot_group_competencies(group_id,competency_id) VALUES (?,?)').bind(gid,p.competencyId))
+    if(!p.division&&!p.department&&!p.unit)writes.push(c.env.DB.prepare('INSERT OR IGNORE INTO hcot_cadre_groups(cadre_id,group_id) VALUES (?,?)').bind(p.cadreId,gid))
+    else writes.push(c.env.DB.prepare('INSERT OR IGNORE INTO hcot_cadre_group_scopes(cadre_id,group_id,division,department,unit) VALUES (?,?,?,?,?)').bind(p.cadreId,gid,p.division,p.department,p.unit))
+  }
+  await c.env.DB.batch(writes)
+  return c.json({ok:true,rows:prepared.length,groups:ids.size,competencies:ownership.size})
+})
 api.post('/hcot/competency-groups/assign-competency', async c => {
   const session=await verifyAccessJwt(c.req.raw,c.env)
   if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
