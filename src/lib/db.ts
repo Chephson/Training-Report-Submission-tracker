@@ -92,6 +92,23 @@ const SCHEMA = [
      FOREIGN KEY(competency_id) REFERENCES hcot_competencies(id) ON DELETE CASCADE)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_hcot_cadre_competency_scope
      ON hcot_cadre_competencies(cadre_id,competency_id,COALESCE(division,''),COALESCE(department,''),COALESCE(unit,''))`,
+  `CREATE TABLE IF NOT EXISTS hcot_competency_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    description TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS hcot_group_competencies (
+    group_id INTEGER NOT NULL,
+    competency_id INTEGER NOT NULL UNIQUE,
+    PRIMARY KEY(group_id,competency_id),
+    FOREIGN KEY(group_id) REFERENCES hcot_competency_groups(id),
+    FOREIGN KEY(competency_id) REFERENCES hcot_competencies(id) ON DELETE CASCADE)`,
+  `CREATE TABLE IF NOT EXISTS hcot_cadre_groups (
+    cadre_id INTEGER NOT NULL,
+    group_id INTEGER NOT NULL,
+    PRIMARY KEY(cadre_id,group_id),
+    FOREIGN KEY(cadre_id) REFERENCES hcot_cadres(id),
+    FOREIGN KEY(group_id) REFERENCES hcot_competency_groups(id))`,
   `CREATE TABLE IF NOT EXISTS hcot_competency_assessments (
      id INTEGER PRIMARY KEY AUTOINCREMENT,
      staff_id INTEGER NOT NULL,
