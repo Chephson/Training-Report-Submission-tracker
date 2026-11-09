@@ -912,9 +912,9 @@ async function renderHCOTSection(section) {
       const orgLabel=c=>[c.division,c.department,c.unit].filter(Boolean).join(' / ')||'Organisation-wide'
       el.innerHTML='<div class="card"><div class="card-head"><h3>Competency library & staff mapping</h3></div>'+
         (isAdmin?'<div class="card-body"><h4>Add competency</h4><label class="field"><span>Competency name</span><input id="hcot-comp-name" maxlength="200"></label><label class="field"><span>Category</span><select id="hcot-comp-cat"><option value="core">Core</option><option value="functional">Functional</option></select></label><label class="field"><span>Division (optional)</span><select id="hcot-comp-div">'+options(divisions,'Organisation-wide')+'</select></label><label class="field"><span>Department (optional)</span><select id="hcot-comp-dept" disabled><option value="">All departments</option></select></label><label class="field"><span>Unit (optional)</span><select id="hcot-comp-unit" disabled><option value="">All units / not applicable</option></select></label><label class="field"><span>Description</span><textarea id="hcot-comp-desc"></textarea></label><button class="btn btn-primary" id="hcot-comp-add">Add competency</button></div>':'')+
-        '<div class="table-wrap"><table><thead><tr><th>Competency</th><th>Category</th><th>Organisational scope</th><th>Assigned staff</th></tr></thead><tbody>'+
-        comps.map(c=>'<tr><td>'+esc(c.name)+'</td><td>'+esc(c.category)+'</td><td>'+esc(orgLabel(c))+'</td><td>'+mappings.filter(m=>m.competency_id===c.id).length+'</td></tr>').join('')+
-        (comps.length?'':'<tr><td colspan="4">No competencies entered.</td></tr>')+'</tbody></table></div></div>'+
+        '<div class="table-wrap"><table><thead><tr><th>Competency</th><th>Category</th><th>Organisational scope</th><th>Assigned staff</th><th>Actions</th></tr></thead><tbody>'+
+        comps.map(c=>'<tr><td>'+esc(c.name)+'</td><td>'+esc(c.category)+'</td><td>'+esc(orgLabel(c))+'</td><td>'+mappings.filter(m=>m.competency_id===c.id).length+'</td><td>'+(isAdmin?'<button class="btn btn-sm hcot-comp-edit" data-id="'+c.id+'">Edit</button> <button class="btn btn-sm hcot-comp-delete" data-id="'+c.id+'">Delete</button>':'—')+'</td></tr>').join('')+
+        (comps.length?'':'<tr><td colspan="5">No competencies entered.</td></tr>')+'</tbody></table></div></div>'+
         '<div class="card mt-16"><div class="card-head"><h3>Staff competency assignments</h3></div>'+
         (isAdmin?'<div class="card-body"><label class="field"><span>Staff member (central Staff Roster)</span><select id="hcot-map-staff">'+options(staff.filter(x=>x.active===1).map(x=>String(x.id)),'Select staff')+'</select></label><div id="hcot-map-staff-label" class="tiny muted"></div><label class="field"><span>Matching competency</span><select id="hcot-map-comp"><option value="">Select staff first</option></select></label><button class="btn btn-primary" id="hcot-map-add">Assign competency</button></div>':'')+
         '<div class="table-wrap"><table><thead><tr><th>Staff</th><th>Competency</th><th>Action</th></tr></thead><tbody>'+
@@ -932,6 +932,32 @@ async function renderHCOTSection(section) {
           await refreshUnits()
         }
         department.onchange=refreshUnits
+        $('.hcot-comp-edit').forEach(btn=>btn.onclick=async()=>{
+          const c=comps.find(x=>String(x.id)===btn.dataset.id)
+          if(!c)return
+          const name=prompt('Edit competency name',c.name)
+          if(name===null)return
+          const category=prompt('Category (core or functional)',c.category)
+          if(category===null)return
+          const newDivision=prompt('Division (blank for organisation-wide)',c.division||'')
+          if(newDivision===null)return
+          const newDepartment=prompt('Department (blank for all departments)',c.department||'')
+          if(newDepartment===null)return
+          const newUnit=prompt('Unit (blank if not applicable)',c.unit||'')
+          if(newUnit===null)return
+          const description=prompt('Description',c.description||'')
+          if(description===null)return
+          try{
+            await api('/hcot/competencies/'+c.id,{method:'PATCH',body:JSON.stringify({name,category,division:newDivision,department:newDepartment,unit:newUnit,description})})
+            toast('Competency updated');renderHCOTSection('competencies')
+          }catch(e){toast(e.message,true)}
+        })
+        $('.hcot-comp-delete').forEach(btn=>btn.onclick=async()=>{
+          const c=comps.find(x=>String(x.id)===btn.dataset.id)
+          if(!c||!confirm('Delete competency "'+c.name+'"? This cannot be undone. Assigned competencies must be unmapped first.'))return
+          try{await api('/hcot/competencies/'+c.id,{method:'DELETE'});toast('Competency deleted');renderHCOTSection('competencies')}
+          catch(e){toast(e.message,true)}
+        })
         $('#hcot-comp-add').onclick=async()=>{try{
           await api('/hcot/competencies',{method:'POST',body:JSON.stringify({name:$('#hcot-comp-name').value,category:$('#hcot-comp-cat').value,division:division.value,department:department.value,unit:unit.value,description:$('#hcot-comp-desc').value})})
           toast('Competency added');renderHCOTSection('competencies')
