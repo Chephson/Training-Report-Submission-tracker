@@ -474,6 +474,7 @@ api.post('/staff/import', async (c) => {
   const cTeam = find('division', 'team')
   const cRole = find('department', 'role')
   const cUnit = find('unit')
+  const cCadre = find('cadre')
   if (cName < 0 || cEmail < 0) {
     return c.json({ error: 'The file needs at least a name column and an email column.' }, 400)
   }
@@ -494,6 +495,17 @@ api.post('/staff/import', async (c) => {
     // CSV import must not bypass the division/department relationship.
     // Existing legacy rows are still readable; imported values require a valid pair.
     const unit = cUnit >= 0 ? (r[cUnit] || '').trim() : ''
+    const cadreName = cCadre >= 0 ? (r[cCadre] || '').trim() : ''
+    let cadreId: number | null = null
+    if (cadreName) {
+      const cadre = await c.env.DB.prepare('SELECT id FROM hcot_cadres WHERE LOWER(TRIM(name))=LOWER(TRIM(?)) AND active=1').bind(cadreName).first<{id:number}>()
+      if (!cadre) {
+        problems.push(`Row ${i + 2}: cadre "${cadreName}" does not exist or is inactive`)
+        skipped++
+        continue
+      }
+      cadreId = cadre.id
+    }
     const directoryError = await validateStaffDirectory(c.env.DB, division || null, department || null, unit || null)
     if (directoryError) {
       problems.push(`Row ${i + 2}: ${directoryError}`)
@@ -501,13 +513,14 @@ api.post('/staff/import', async (c) => {
       continue
     }
     const res = await c.env.DB.prepare(
-      `INSERT INTO staff (full_name, email, team, role, unit, active) VALUES (?, ?, ?, ?, ?, 1)
+      `INSERT INTO staff (full_name, email, team, role, unit, cadre_id, active) VALUES (?, ?, ?, ?, ?, ?, 1)
        ON CONFLICT(email) DO UPDATE SET full_name = excluded.full_name,
          team = CASE WHEN ? = 1 THEN excluded.team ELSE staff.team END,
          role = CASE WHEN ? = 1 THEN excluded.role ELSE staff.role END,
-         unit = CASE WHEN ? = 1 THEN excluded.unit ELSE staff.unit END`
+         unit = CASE WHEN ? = 1 THEN excluded.unit ELSE staff.unit END,
+         cadre_id = CASE WHEN ? = 1 THEN excluded.cadre_id ELSE staff.cadre_id END`
     )
-      .bind(name, email, division || null, department || null, unit || null, cTeam >= 0 ? 1 : 0, cRole >= 0 ? 1 : 0, cUnit >= 0 ? 1 : 0)
+      .bind(name, email, division || null, department || null, unit || null, cadreId, cTeam >= 0 ? 1 : 0, cRole >= 0 ? 1 : 0, cUnit >= 0 ? 1 : 0, cCadre >= 0 ? 1 : 0)
       .run()
     if (res.meta.changes) added++
   }
