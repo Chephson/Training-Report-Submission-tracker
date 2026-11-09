@@ -1102,6 +1102,7 @@ async function renderRoster(el) {
                     <td class="tiny muted">${esc(s.email)}</td>
                     <td class="tiny muted">${esc(s.team || '—')}</td>
                     <td class="tiny muted">${esc(s.role || '—')}</td>
+                    <td class="tiny muted">${esc(s.unit || '—')}</td>
                     <td style="text-align:right;white-space:nowrap">
                       <button class="btn btn-sm btn-ghost" data-history="${s.id}">History</button>
                       <button class="btn btn-sm btn-ghost" data-edit="${s.id}">Edit</button>
