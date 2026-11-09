@@ -17,3 +17,10 @@ test('cadre selectors show names rather than numeric database IDs',()=>{
   assert.match(ui,/for\(const id of \['hcot-cadre-assign','hcot-rule-cadre'\]\)/);
   assert.match(ui,/o\.textContent=cadre\.name/);
 });
+
+test('staff roster offers downloadable CSV bulk import template',()=>{
+  assert.match(ui,/id="r-template"/);
+  assert.match(ui,/hcot-staff-roster-bulk-template\.csv/);
+  assert.match(ui,/full_name,email,division,department,unit/);
+  assert.match(ui,/URL\.createObjectURL\(blob\)/);
+});
