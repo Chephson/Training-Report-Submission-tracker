@@ -1038,14 +1038,21 @@ api.get('/hcot/competency-assessments', async c => {
   if(!Number.isSafeInteger(staffId)||staffId<=0)return c.json({error:'Select a staff member.'},400)
   const staff=await c.env.DB.prepare('SELECT id,full_name,email,team,role,unit,cadre_id FROM staff WHERE id=?').bind(staffId).first()
   if(!staff)return c.json({error:'Staff member not found.'},404)
-  const eligible=await c.env.DB.prepare(`SELECT DISTINCT p.id,p.name,p.category,m.cadre_id
-    FROM staff s JOIN hcot_cadre_competencies m ON m.cadre_id=s.cadre_id
-    JOIN hcot_competencies p ON p.id=m.competency_id
-    WHERE s.id=? AND s.active=1
-    AND (m.division IS NULL OR LOWER(TRIM(m.division))=LOWER(TRIM(COALESCE(s.team,''))))
-    AND (m.department IS NULL OR LOWER(TRIM(m.department))=LOWER(TRIM(COALESCE(s.role,''))))
-    AND (m.unit IS NULL OR LOWER(TRIM(m.unit))=LOWER(TRIM(COALESCE(s.unit,''))))
-    ORDER BY p.name COLLATE NOCASE`).bind(staffId).all()
+  const eligible=await c.env.DB.prepare(`WITH inherited AS (
+      SELECT m.competency_id,1 AS inherited,0 AS direct
+      FROM staff s JOIN hcot_cadre_competencies m ON m.cadre_id=s.cadre_id
+      WHERE s.id=? AND s.active=1
+      AND (m.division IS NULL OR LOWER(TRIM(m.division))=LOWER(TRIM(COALESCE(s.team,''))))
+      AND (m.department IS NULL OR LOWER(TRIM(m.department))=LOWER(TRIM(COALESCE(s.role,''))))
+      AND (m.unit IS NULL OR LOWER(TRIM(m.unit))=LOWER(TRIM(COALESCE(s.unit,''))))
+    ), direct AS (
+      SELECT d.competency_id,0 AS inherited,1 AS direct
+      FROM hcot_staff_competencies d JOIN staff s ON s.id=d.staff_id
+      WHERE d.staff_id=? AND s.active=1
+    ), combined AS (SELECT * FROM inherited UNION ALL SELECT * FROM direct)
+    SELECT p.id,p.name,p.category,MAX(z.inherited) AS inherited,MAX(z.direct) AS direct
+    FROM combined z JOIN hcot_competencies p ON p.id=z.competency_id
+    GROUP BY p.id,p.name,p.category ORDER BY p.name COLLATE NOCASE`).bind(staffId,staffId).all()
   const history=await c.env.DB.prepare(`SELECT a.*,p.name AS competency_name,p.category FROM hcot_competency_assessments a
     JOIN hcot_competencies p ON p.id=a.competency_id WHERE a.staff_id=?
     ORDER BY a.assessed_at DESC,a.id DESC LIMIT 500`).bind(staffId).all()
@@ -1060,12 +1067,15 @@ api.post('/hcot/competency-assessments', async c => {
   if(!Number.isSafeInteger(staffId)||staffId<=0||!Number.isSafeInteger(competencyId)||competencyId<=0)return c.json({error:'Select staff and competency.'},400)
   if(!Number.isInteger(score)||score<0||score>100||!Number.isInteger(target)||target<0||target>100)return c.json({error:'Scores and targets must be whole numbers from 0 to 100.'},400)
   if(!cycle||cycle.length>80||notes.length>2000)return c.json({error:'Invalid assessment cycle or notes.'},400)
-  const eligible=await c.env.DB.prepare(`SELECT 1 AS eligible FROM staff s JOIN hcot_cadre_competencies m ON m.cadre_id=s.cadre_id
-    WHERE s.id=? AND s.active=1 AND m.competency_id=?
-    AND (m.division IS NULL OR LOWER(TRIM(m.division))=LOWER(TRIM(COALESCE(s.team,''))))
-    AND (m.department IS NULL OR LOWER(TRIM(m.department))=LOWER(TRIM(COALESCE(s.role,''))))
-    AND (m.unit IS NULL OR LOWER(TRIM(m.unit))=LOWER(TRIM(COALESCE(s.unit,'')))) LIMIT 1`).bind(staffId,competencyId).first()
-  if(!eligible)return c.json({error:'Competency is not currently inherited by this staff member through their cadre.'},409)
+  const eligible=await c.env.DB.prepare(`SELECT 1 AS eligible FROM staff s
+    WHERE s.id=? AND s.active=1 AND (
+      EXISTS(SELECT 1 FROM hcot_staff_competencies d WHERE d.staff_id=s.id AND d.competency_id=?)
+      OR EXISTS(SELECT 1 FROM hcot_cadre_competencies m WHERE m.cadre_id=s.cadre_id AND m.competency_id=?
+        AND (m.division IS NULL OR LOWER(TRIM(m.division))=LOWER(TRIM(COALESCE(s.team,''))))
+        AND (m.department IS NULL OR LOWER(TRIM(m.department))=LOWER(TRIM(COALESCE(s.role,''))))
+        AND (m.unit IS NULL OR LOWER(TRIM(m.unit))=LOWER(TRIM(COALESCE(s.unit,'')))))
+    ) LIMIT 1`).bind(staffId,competencyId,competencyId).first()
+  if(!eligible)return c.json({error:'Competency is not currently mapped to this staff member.'},409)
   const result=await c.env.DB.prepare(`INSERT INTO hcot_competency_assessments(staff_id,competency_id,cycle,score,target_score,assessor_email,notes)
     VALUES(?,?,?,?,?,?,?)`).bind(staffId,competencyId,cycle,score,target,session.email,notes||null).run()
   return c.json({ok:true,id:result.meta.last_row_id},201)
