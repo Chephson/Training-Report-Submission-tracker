@@ -7,6 +7,7 @@ on:
       - fix/hcot-preview-secure-access-bootstrap
       - feature/hcot-staff-competency-mapping
       - feature/hcot-competency-edit-delete
+      - feature/hcot-cadre-competency-inheritance
   pull_request:
     branches:
       - main
