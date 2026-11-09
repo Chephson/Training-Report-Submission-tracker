@@ -997,6 +997,9 @@ async function renderHCOTSection(section) {
           catch(e){bulkResult.textContent=e.message;toast(e.message,true)}
         }
         const staffCadre=$('#hcot-cadre-staff'),cadreSelect=$('#hcot-cadre-assign'),ruleComp=$('#hcot-rule-comp')
+        for(const id of ['hcot-cadre-assign','hcot-rule-cadre']){
+          $('#'+id).querySelectorAll('option').forEach(o=>{if(o.value){const cadre=cadres.find(x=>String(x.id)===o.value);if(cadre)o.textContent=cadre.name}})
+        }
         staffCadre.querySelectorAll('option').forEach(o=>{if(o.value){const x=staff.find(st=>String(st.id)===o.value);o.textContent=x.full_name+' ('+x.email+')'}})
         ruleComp.querySelectorAll('option').forEach(o=>{if(o.value){const x=comps.find(co=>String(co.id)===o.value);o.textContent=x.name+' — '+orgLabel(x)}})
         staffCadre.onchange=()=>{const st=staff.find(x=>String(x.id)===staffCadre.value);cadreSelect.value=st?.cadre_id||''}
