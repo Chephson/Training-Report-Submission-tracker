@@ -520,7 +520,7 @@ api.post('/staff/import', async (c) => {
          unit = CASE WHEN ? = 1 THEN excluded.unit ELSE staff.unit END,
          cadre_id = CASE WHEN ? = 1 THEN excluded.cadre_id ELSE staff.cadre_id END`
     )
-      .bind(name, email, division || null, department || null, unit || null, cadreId, cTeam >= 0 ? 1 : 0, cRole >= 0 ? 1 : 0, cUnit >= 0 ? 1 : 0, cCadre >= 0 ? 1 : 0)
+      .bind(name, email, division || null, department || null, unit || null, cadreId, cTeam >= 0 ? 1 : 0, cRole >= 0 ? 1 : 0, cUnit >= 0 ? 1 : 0, cadreName ? 1 : 0)
       .run()
     if (res.meta.changes) added++
   }
