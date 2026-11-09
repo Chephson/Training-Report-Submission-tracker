@@ -893,7 +893,7 @@ api.post('/hcot/competency-groups/import', async c => {
   if(csv.length>1000000)return c.json({error:'CSV exceeds 1 MB.'},413)
   const {headers,rows}=parseDelimited(csv)
   const keys=['competency_group','group_description','competency_name','cadre','division','department','unit']
-  const indices=keys.map(k=>headers.findIndex(h=>h.trim().toLowerCase().replace(/\\s+/g,'_')===k))
+  const indices=keys.map(k=>headers.findIndex(h=>h.replace(/^\uFEFF/,'').trim().toLowerCase().replace(/\s+/g,'_')===k))
   if(indices[0]<0||indices[2]<0||indices[3]<0)return c.json({error:'Required columns: competency_group, competency_name, cadre.'},400)
   if(!rows.length||rows.length>1000)return c.json({error:'Include 1–1000 data rows.'},400)
   const errors:string[]=[],prepared:{group:string;description:string;competencyId:number;cadreId:number;division:string|null;department:string|null;unit:string|null}[]=[]
