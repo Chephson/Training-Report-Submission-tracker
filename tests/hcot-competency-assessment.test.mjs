@@ -77,3 +77,23 @@ test('bulk upload validates competency category and prevents duplicate competenc
  assert.match(api,/A competency group with this name already exists/)
  assert.match(api,/INSERT INTO hcot_competency_groups\(name,description\) SELECT/)
 })
+
+test('group-scoped competency inheritance is enforced consistently for reading and saving assessments',()=>{
+ const get=api.slice(api.indexOf("api.get('/hcot/competency-assessments'"),api.indexOf("api.get('/hcot/effective-competencies'"));
+ const post=api.slice(api.indexOf("api.post('/hcot/competency-assessments'"),api.indexOf("api.get('/hcot/competency-assessments'"));
+ for(const section of [get,post]){
+  assert.match(section,/hcot_group_competencies/);
+  assert.match(section,/hcot_cadre_groups/);
+  assert.match(section,/hcot_cadre_group_scopes/);
+  assert.match(section,/LOWER\(TRIM\(gs\.division\)\)=LOWER\(TRIM\(COALESCE\(s\.team,''\)\)\)/);
+  assert.match(section,/LOWER\(TRIM\(gs\.department\)\)=LOWER\(TRIM\(COALESCE\(s\.role,''\)\)\)/);
+  assert.match(section,/LOWER\(TRIM\(gs\.unit\)\)=LOWER\(TRIM\(COALESCE\(s\.unit,''\)\)\)/);
+ }
+});
+test('bulk import records the authenticated administrator and summary in the activity ledger',()=>{
+ const section=api.slice(api.indexOf("api.post('/hcot/competency-groups/import'"),api.indexOf("api.get('/hcot/competency-assessments'"));
+ assert.match(section,/await log\(c\.env\.DB,'hcot_competency_groups_import'/);
+ assert.match(section,/session\.email/);
+ assert.match(section,/scope_mappings:/);
+ assert.match(section,/global_mappings:/);
+});
