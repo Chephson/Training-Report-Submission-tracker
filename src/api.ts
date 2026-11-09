@@ -879,6 +879,43 @@ async function isHcotCompetencyAdmin(c:any,email:string):Promise<boolean>{
   return admins.includes(email.trim().toLowerCase())
 }
 
+/* Competency edits preserve IDs and existing staff assignments. */
+api.patch('/hcot/competencies/:id', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session || !(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const id=Number(c.req.param('id'))
+  if(!Number.isSafeInteger(id)||id<=0)return c.json({error:'Invalid competency ID.'},400)
+  const b=await c.req.json<{name?:string;category?:string;division?:string;department?:string;unit?:string;description?:string}>().catch(()=>({}))
+  const name=String(b.name??'').trim(),division=String(b.division??'').trim(),department=String(b.department??'').trim(),unit=String(b.unit??'').trim()
+  if(!name||name.length>200)return c.json({error:'Enter a competency name (up to 200 characters).'},400)
+  if(!['core','functional'].includes(b.category||''))return c.json({error:'Invalid competency category.'},400)
+  const err=await validateStaffDirectory(c.env.DB,division||null,department||null,unit||null)
+  if(err)return c.json({error:err},400)
+  const existing=await c.env.DB.prepare('SELECT id FROM hcot_competencies WHERE id=?').bind(id).first()
+  if(!existing)return c.json({error:'Competency not found.'},404)
+  const incompatible=await c.env.DB.prepare(`SELECT COUNT(*) AS total FROM hcot_staff_competencies m JOIN staff s ON s.id=m.staff_id WHERE m.competency_id=? AND
+    ((? IS NOT NULL AND LOWER(TRIM(COALESCE(s.team,'')))<>LOWER(?)) OR
+     (? IS NOT NULL AND LOWER(TRIM(COALESCE(s.role,'')))<>LOWER(?)) OR
+     (? IS NOT NULL AND LOWER(TRIM(COALESCE(s.unit,'')))<>LOWER(?)))`)
+    .bind(id,division||null,division||null,department||null,department||null,unit||null,unit||null).first<{total:number}>()
+  if(Number(incompatible?.total||0)>0)return c.json({error:'This change would conflict with existing staff assignments. Remove incompatible assignments before changing the organisational scope.'},409)
+  await c.env.DB.prepare('UPDATE hcot_competencies SET name=?,category=?,division=?,department=?,unit=?,description=? WHERE id=?')
+    .bind(name,b.category,division||null,department||null,unit||null,String(b.description??'').trim()||null,id).run()
+  return c.json({ok:true,id})
+})
+api.delete('/hcot/competencies/:id', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session || !(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const id=Number(c.req.param('id'))
+  if(!Number.isSafeInteger(id)||id<=0)return c.json({error:'Invalid competency ID.'},400)
+  const existing=await c.env.DB.prepare('SELECT id FROM hcot_competencies WHERE id=?').bind(id).first()
+  if(!existing)return c.json({error:'Competency not found.'},404)
+  const mapped=await c.env.DB.prepare('SELECT COUNT(*) AS total FROM hcot_staff_competencies WHERE competency_id=?').bind(id).first<{total:number}>()
+  if(Number(mapped?.total||0)>0)return c.json({error:'This competency is assigned to staff. Remove its staff assignments before deleting it.'},409)
+  await c.env.DB.prepare('DELETE FROM hcot_competencies WHERE id=? AND NOT EXISTS (SELECT 1 FROM hcot_staff_competencies WHERE competency_id=?)').bind(id,id).run()
+  return c.json({ok:true})
+})
+
 /* Staff identities come exclusively from the central Staff Roster. */
 api.get('/hcot/competency-staff', async c => {
   const rows=await c.env.DB.prepare(`SELECT s.id,s.full_name,s.email,s.team AS division,s.role AS department,s.unit,s.active
