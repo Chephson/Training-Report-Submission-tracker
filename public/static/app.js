@@ -900,10 +900,14 @@ async function renderHCOTSection(section) {
         (data.plans||[]).map(x=>'<tr><td>'+esc(x.title)+'</td><td>'+esc(x.start_date||'—')+' – '+esc(x.end_date||'—')+'</td><td>'+esc(x.location||'—')+'</td><td>'+x.participants+'</td></tr>').join('')+
         (data.plans.length?'':'<tr><td colspan="4">No training plans scheduled for this year.</td></tr>')+'</tbody></table></div></div>'
     }else if(section==='competencies'){
-      const [session, catalogue, roster, mapped, divisionsData]=await Promise.all([
-        api('/hcot/access-session'),api('/hcot/competencies'),api('/hcot/competency-staff'),api('/hcot/competency-mappings'),api('/staff-directory/divisions')
+      const session=await api('/hcot/access-session')
+      const isAdmin=session.role==='admin'
+      const [catalogue, mapped, roster, divisionsData]=await Promise.all([
+        api('/hcot/competencies'),api('/hcot/competency-mappings'),
+        isAdmin?api('/hcot/competency-staff'):Promise.resolve({staff:[]}),
+        isAdmin?api('/staff-directory/divisions'):Promise.resolve({options:[]})
       ])
-      const isAdmin=session.role==='admin', comps=catalogue.competencies||[],staff=roster.staff||[],mappings=mapped.mappings||[],divisions=divisionsData.options||[]
+      const comps=catalogue.competencies||[],staff=roster.staff||[],mappings=mapped.mappings||[],divisions=divisionsData.options||[]
       const options=(values,empty)=>'<option value="">'+empty+'</option>'+values.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join('')
       const orgLabel=c=>[c.division,c.department,c.unit].filter(Boolean).join(' / ')||'Organisation-wide'
       el.innerHTML='<div class="card"><div class="card-head"><h3>Competency library & staff mapping</h3></div>'+
