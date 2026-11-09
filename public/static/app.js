@@ -1041,7 +1041,7 @@ async function renderHCOTSection(section) {
         }
         scopeDepartment.onchange=updateScopeUnits
         $('#hcg-template').onclick=()=>{
-          const csv='\\uFEFFcompetency_group,group_description,competency_name,cadre,division,department,unit\\r\\n'
+          const csv='\uFEFFcompetency_group,group_description,competency_name,cadre,division,department,unit\r\n'
           const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}))
           const a=document.createElement('a');a.href=url;a.download='hcot-competency-group-mapping-template.csv';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)
         }
