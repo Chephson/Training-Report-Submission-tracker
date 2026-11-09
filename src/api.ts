@@ -861,12 +861,58 @@ api.get('/hcot/competencies', async c => {
   return c.json({competencies:rows.results||[]})
 })
 api.post('/hcot/competencies', async c => {
-  const b=await c.req.json<{name?:string;category?:string;division?:string;unit?:string;description?:string}>().catch(()=>({}))
-  if(!b.name?.trim()||b.name.length>200)return c.json({error:'Enter a competency name (up to 200 characters).'},400)
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session || !(await isHcotCompetencyAdmin(c,session.email))) return c.json({error:'HCOT administrator access required.'},403)
+  const b=await c.req.json<{name?:string;category?:string;division?:string;department?:string;unit?:string;description?:string}>().catch(()=>({}))
+  const name=String(b.name??'').trim(),division=String(b.division??'').trim(),department=String(b.department??'').trim(),unit=String(b.unit??'').trim()
+  if(!name||name.length>200)return c.json({error:'Enter a competency name (up to 200 characters).'},400)
   if(!['core','functional'].includes(b.category||'core'))return c.json({error:'Invalid competency category.'},400)
-  const result=await c.env.DB.prepare('INSERT INTO hcot_competencies (name,category,division,unit,description) VALUES (?,?,?,?,?)')
-    .bind(b.name.trim(),b.category||'core',b.division?.trim()||null,b.unit?.trim()||null,b.description?.trim()||null).run()
+  const err=await validateStaffDirectory(c.env.DB,division||null,department||null,unit||null)
+  if(err)return c.json({error:err},400)
+  const result=await c.env.DB.prepare('INSERT INTO hcot_competencies (name,category,division,department,unit,description) VALUES (?,?,?,?,?,?)')
+    .bind(name,b.category||'core',division||null,department||null,unit||null,b.description?.trim()||null).run()
   return c.json({ok:true,id:result.meta.last_row_id},201)
+})
+
+async function isHcotCompetencyAdmin(c:any,email:string):Promise<boolean>{
+  const admins=(c.env.HCOT_SETTINGS_ADMIN_EMAILS||'').split(',').map((s:string)=>s.trim().toLowerCase()).filter(Boolean)
+  return admins.includes(email.trim().toLowerCase())
+}
+
+/* Staff identities come exclusively from the central Staff Roster. */
+api.get('/hcot/competency-staff', async c => {
+  const rows=await c.env.DB.prepare(`SELECT s.id,s.full_name,s.email,s.team AS division,s.role AS department,s.unit,s.active
+    FROM staff s ORDER BY s.full_name COLLATE NOCASE`).all()
+  return c.json({staff:rows.results||[]})
+})
+api.get('/hcot/competency-mappings', async c => {
+  const rows=await c.env.DB.prepare(`SELECT m.staff_id,m.competency_id,s.full_name,s.email,c.name AS competency_name
+    FROM hcot_staff_competencies m JOIN staff s ON s.id=m.staff_id
+    JOIN hcot_competencies c ON c.id=m.competency_id ORDER BY s.full_name COLLATE NOCASE,c.name COLLATE NOCASE`).all()
+  return c.json({mappings:rows.results||[]})
+})
+api.post('/hcot/competency-mappings', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session || !(await isHcotCompetencyAdmin(c,session.email))) return c.json({error:'HCOT administrator access required.'},403)
+  const b=await c.req.json<{staff_id?:number;competency_id?:number}>().catch(()=>({}))
+  const staffId=Number(b.staff_id),competencyId=Number(b.competency_id)
+  if(!Number.isSafeInteger(staffId)||staffId<=0||!Number.isSafeInteger(competencyId)||competencyId<=0)return c.json({error:'Select staff and competency.'},400)
+  const staff=await c.env.DB.prepare('SELECT id,team,role,unit,active FROM staff WHERE id=?').bind(staffId).first<{id:number;team:string|null;role:string|null;unit:string|null;active:number}>()
+  if(!staff||staff.active!==1)return c.json({error:'Select an active staff member from the Staff Roster.'},400)
+  const comp=await c.env.DB.prepare('SELECT id,division,department,unit FROM hcot_competencies WHERE id=?').bind(competencyId).first<{id:number;division:string|null;department:string|null;unit:string|null}>()
+  if(!comp)return c.json({error:'Competency not found.'},404)
+  const eq=(a:string|null,b:string|null)=>String(a||'').trim().toLowerCase()===String(b||'').trim().toLowerCase()
+  if((comp.division&&!eq(comp.division,staff.team))||(comp.department&&!eq(comp.department,staff.role))||(comp.unit&&!eq(comp.unit,staff.unit)))return c.json({error:'Competency does not match the staff division, department or unit.'},409)
+  const result=await c.env.DB.prepare('INSERT OR IGNORE INTO hcot_staff_competencies(staff_id,competency_id) VALUES(?,?)').bind(staffId,competencyId).run()
+  return c.json({ok:true,created:(result.meta.changes||0)>0})
+})
+api.delete('/hcot/competency-mappings', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session || !(await isHcotCompetencyAdmin(c,session.email))) return c.json({error:'HCOT administrator access required.'},403)
+  const staffId=Number(c.req.query('staff_id')),competencyId=Number(c.req.query('competency_id'))
+  if(!Number.isSafeInteger(staffId)||staffId<=0||!Number.isSafeInteger(competencyId)||competencyId<=0)return c.json({error:'Valid staff and competency IDs required.'},400)
+  const result=await c.env.DB.prepare('DELETE FROM hcot_staff_competencies WHERE staff_id=? AND competency_id=?').bind(staffId,competencyId).run()
+  return c.json({ok:true,removed:(result.meta.changes||0)>0})
 })
 api.get('/hcot/goals', async c => {
   const rows=await c.env.DB.prepare('SELECT * FROM hcot_goals ORDER BY id DESC').all()
