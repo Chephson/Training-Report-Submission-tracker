@@ -1138,68 +1138,86 @@ async function renderRoster(el) {
 }
 
 async function staffDirectoryModal() {
-  let directories
-  try {
-    const [divisions, departments] = await Promise.all([api('/staff-directory/divisions'), api('/staff-directory/departments')])
-    directories = { divisions: divisions.options || [], departments: departments.options || [] }
-  } catch (e) { toast(e.message, true); return }
-  const m = modal({ title: 'Manage divisions and departments', wide: true,
-    body: '<p class="tiny muted mb-12">Add, rename or remove organisational entries. Renaming updates existing staff assignments; entries assigned to staff cannot be removed.</p><div id="directory-content"></div>',
-    footer: '<button class="btn" data-close>Close</button>' })
+  let divisions = []
+  const fetchDivisions = async () => { divisions = (await api('/staff-directory/divisions')).options || [] }
+  try { await fetchDivisions() } catch(e) { toast(e.message,true); return }
+  const m = modal({title:'Manage divisions and departments',wide:true,
+    body:'<p class="tiny muted mb-12">Each department belongs to a division. Rename operations update staff assignments; entries in use cannot be deleted.</p><div id="directory-content"></div>',
+    footer:'<button class="btn" data-close>Close</button>'})
+  let selected = divisions[0] || ''
+  let departments = []
+  const refreshDepartments = async () => { departments = selected ? (await api('/staff-directory/departments?division='+encodeURIComponent(selected))).options || [] : [] }
   const render = () => {
-    m.$('#directory-content').innerHTML = ['divisions','departments'].map(kind => `<div class="card mb-12"><div class="card-head"><h3>${kind === 'divisions' ? 'Divisions' : 'Departments'}</h3></div><div class="card-body"><div class="row" style="gap:8px"><input type="text" data-new="${kind}" placeholder="New ${kind === 'divisions' ? 'division' : 'department'}" maxlength="120"><button class="btn btn-primary" data-add="${kind}">Add</button></div><div class="mt-12">${directories[kind].map(name => `<div class="row mb-8" style="gap:8px;align-items:center"><span style="flex:1">${esc(name)}</span><button class="btn btn-sm" data-rename="${kind}" data-name="${esc(name)}">Rename</button><button class="btn btn-sm btn-ghost" data-remove="${kind}" data-name="${esc(name)}">Remove</button></div>`).join('') || '<p class="tiny muted">No entries yet.</p>'}</div></div></div>`).join('')
+    m.$('#directory-content').innerHTML = `<div class="card mb-12"><div class="card-head"><h3>Divisions</h3></div><div class="card-body"><div class="row" style="gap:8px"><input data-new="divisions" maxlength="120" placeholder="New division"><button class="btn btn-primary" data-add="divisions">Add division</button></div><div class="mt-12">${divisions.map(name=>`<div class="row mb-8" style="gap:8px;align-items:center"><span style="flex:1">${esc(name)}</span><button class="btn btn-sm" data-rename="divisions" data-name="${esc(name)}">Rename</button><button class="btn btn-sm btn-ghost" data-remove="divisions" data-name="${esc(name)}">Remove</button></div>`).join('') || '<p class="tiny muted">Add a division to begin.</p>'}</div></div></div>
+    <div class="card"><div class="card-head"><h3>Departments by division</h3></div><div class="card-body"><label class="field"><span>Division</span><select id="directory-division"><option value="">Select division</option>${divisions.map(name=>`<option value="${esc(name)}"${name===selected?' selected':''}>${esc(name)}</option>`).join('')}</select></label>
+    <div class="row" style="gap:8px"><input data-new="departments" maxlength="120" placeholder="New department" ${selected?'':'disabled'}><button class="btn btn-primary" data-add="departments" ${selected?'':'disabled'}>Add department</button></div>
+    <div class="mt-12">${departments.map(name=>`<div class="row mb-8" style="gap:8px;align-items:center"><span style="flex:1">${esc(name)}</span><button class="btn btn-sm" data-rename="departments" data-name="${esc(name)}">Rename</button><button class="btn btn-sm btn-ghost" data-remove="departments" data-name="${esc(name)}">Remove</button></div>`).join('') || '<p class="tiny muted">No departments for this division.</p>'}</div></div></div>`
   }
-  // Event delegation allows refresh without losing controls.
-  m.$('#directory-content').addEventListener('click', async e => {
-    const btn = e.target.closest('button[data-add],button[data-rename],button[data-remove]')
-    if (!btn) return
-    const kind = btn.dataset.add || btn.dataset.rename || btn.dataset.remove
-    const oldName = btn.dataset.name
-    let name
-    if (btn.dataset.add) name = m.$('[data-new="' + kind + '"]').value.trim()
-    else if (btn.dataset.rename) name = prompt('New name', oldName)?.trim()
-    else if (!confirm('Remove ' + oldName + '? Entries currently assigned to staff cannot be removed.')) return
-    if (btn.dataset.add || btn.dataset.rename) {
-      if (!name) return toast('Enter a name', true)
-    }
-    btn.disabled = true
-    try {
-      if (btn.dataset.add) await api('/staff-directory/' + kind, { method:'POST', body: JSON.stringify({ name }) })
-      else if (btn.dataset.rename) await api('/staff-directory/' + kind, { method:'PATCH', body: JSON.stringify({ old_name:oldName, name }) })
-      else await api('/staff-directory/' + kind + '?name=' + encodeURIComponent(oldName), { method:'DELETE' })
-      const updated = await api('/staff-directory/' + kind)
-      directories[kind] = updated.options || []
-      render(); toast('Directory updated')
-    } catch(err) { toast(err.message, true); btn.disabled = false }
+  m.$('#directory-content').addEventListener('change',async e=>{
+    if(e.target.id!=='directory-division') return
+    selected=e.target.value
+    try { await refreshDepartments();render() } catch(err) { toast(err.message,true) }
   })
-  render()
+  m.$('#directory-content').addEventListener('click',async e=>{
+    const btn=e.target.closest('button[data-add],button[data-rename],button[data-remove]')
+    if(!btn)return
+    const kind=btn.dataset.add||btn.dataset.rename||btn.dataset.remove
+    const old_name=btn.dataset.name
+    let name
+    if(btn.dataset.add) name=m.$('[data-new="'+kind+'"]').value.trim()
+    else if(btn.dataset.rename) name=prompt('New name',old_name)?.trim()
+    else if(!confirm('Remove '+old_name+'?'))return
+    if((btn.dataset.add||btn.dataset.rename)&&!name)return toast('Enter a name',true)
+    btn.disabled=true
+    try {
+      const base='/staff-directory/'+kind
+      if(btn.dataset.add)await api(base,{method:'POST',body:JSON.stringify({name,division:selected})})
+      else if(btn.dataset.rename)await api(base,{method:'PATCH',body:JSON.stringify({old_name,name,division:selected})})
+      else await api(base+'?name='+encodeURIComponent(old_name)+(kind==='departments'?'&division='+encodeURIComponent(selected):''),{method:'DELETE'})
+      if(kind==='divisions') {
+        if(selected===old_name&&btn.dataset.rename)selected=name
+        if(selected===old_name&&btn.dataset.remove)selected=''
+        await fetchDivisions()
+        if(!selected||!divisions.includes(selected))selected=divisions[0]||''
+      }
+      await refreshDepartments();render();toast('Directory updated')
+    }catch(err){toast(err.message,true);btn.disabled=false}
+  })
+  try{await refreshDepartments();render()}catch(e){toast(e.message,true)}
 }
 
 async function staffModal(person) {
-  const p = person || {}
-  let directories
-  try {
-    const [divisions, departments] = await Promise.all([api('/staff-directory/divisions'),api('/staff-directory/departments')])
-    directories = { divisions: divisions.options || [], departments: departments.options || [] }
-  } catch (e) { toast(e.message, true); return }
-  const select = (kind, id, current) => `<label class="field"><span>${kind === 'divisions' ? 'Division' : 'Department'}</span><select id="${id}"><option value="">— Select ${kind === 'divisions' ? 'division' : 'department'} —</option>${directories[kind].map(name => `<option value="${esc(name)}"${name === current ? ' selected' : ''}>${esc(name)}</option>`).join('')}</select></label>`
-  const m = modal({
-    title: person ? 'Edit staff member' : 'Add staff member',
-    body: `<label class="field"><span>Full name</span><input type="text" id="s-name" value="${esc(p.full_name || '')}" placeholder="e.g. Amina Yusuf" /></label>
-      <label class="field"><span>Email address</span><input type="email" id="s-email" value="${esc(p.email || '')}" placeholder="name@organisation.org" /><small>This must match the email used on the report form.</small></label>
-      <div class="grid grid-2">${select('divisions','s-team',p.team || '')}${select('departments','s-role',p.role || '')}</div>
-      <p class="tiny muted">To change the available choices, use Manage divisions & departments on the Staff Roster page.</p>
-      ${person ? `<label class="field row" style="gap:8px"><input type="checkbox" id="s-active" style="width:auto" ${p.active ? 'checked' : ''} /><span style="margin:0">Active — still required to submit reports</span></label>` : ''}`,
-    footer: `<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="s-save">${person ? 'Save changes' : 'Add to roster'}</button>`,
-  })
-  m.$('#s-save').addEventListener('click', async () => {
-    const body = { full_name:m.$('#s-name').value.trim(),email:m.$('#s-email').value.trim(),team:m.$('#s-team').value,role:m.$('#s-role').value }
-    if (person && m.$('#s-active')) body.active = m.$('#s-active').checked ? 1 : 0
-    try {
-      if (person) await api('/staff/' + person.id, { method:'PATCH',body:JSON.stringify(body) })
-      else await api('/staff', { method:'POST',body:JSON.stringify(body) })
-      m.close(); toast(person ? 'Saved' : 'Added to roster'); navigate('roster',true)
-    } catch(e) { toast(e.message,true) }
+  const p=person||{}
+  let divisions=[]
+  try{divisions=(await api('/staff-directory/divisions')).options||[]}catch(e){toast(e.message,true);return}
+  const m=modal({title:person?'Edit staff member':'Add staff member',body:`
+    <label class="field"><span>Full name</span><input id="s-name" type="text" value="${esc(p.full_name||'')}" placeholder="Full name"></label>
+    <label class="field"><span>Email address</span><input id="s-email" type="email" value="${esc(p.email||'')}" placeholder="name@organisation.org"></label>
+    <div class="grid grid-2"><label class="field"><span>Division</span><select id="s-team"><option value="">Select division</option>${divisions.map(name=>`<option value="${esc(name)}"${name===p.team?' selected':''}>${esc(name)}</option>`).join('')}</select></label>
+    <label class="field"><span>Department</span><select id="s-role" disabled><option value="">Select a division first</option></select></label></div>
+    <p class="tiny muted">Departments shown depend on the selected division. Manage choices from the Staff Roster page.</p>
+    ${person?`<label class="field row" style="gap:8px"><input type="checkbox" id="s-active" style="width:auto" ${p.active?'checked':''}><span>Active — still required to submit reports</span></label>`:''}`,
+    footer:`<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="s-save">${person?'Save changes':'Add to roster'}</button>`})
+  const updateDepartments=async preserve=>{
+    const division=m.$('#s-team').value,department=m.$('#s-role')
+    department.disabled=true;department.innerHTML='<option value="">Loading departments…</option>'
+    if(!division){department.innerHTML='<option value="">Select a division first</option>';return}
+    try{
+      const options=(await api('/staff-directory/departments?division='+encodeURIComponent(division))).options||[]
+      department.innerHTML='<option value="">Select department</option>'+options.map(name=>`<option value="${esc(name)}"${name===preserve?' selected':''}>${esc(name)}</option>`).join('')
+      department.disabled=false
+    }catch(e){department.innerHTML='<option value="">Could not load departments</option>';toast(e.message,true)}
+  }
+  m.$('#s-team').addEventListener('change',()=>updateDepartments(''))
+  await updateDepartments(p.role||'')
+  m.$('#s-save').addEventListener('click',async()=>{
+    const body={full_name:m.$('#s-name').value.trim(),email:m.$('#s-email').value.trim(),team:m.$('#s-team').value,role:m.$('#s-role').value}
+    if(person&&m.$('#s-active'))body.active=m.$('#s-active').checked?1:0
+    try{
+      if(person)await api('/staff/'+person.id,{method:'PATCH',body:JSON.stringify(body)})
+      else await api('/staff',{method:'POST',body:JSON.stringify(body)})
+      m.close();toast(person?'Saved':'Added to roster');navigate('roster',true)
+    }catch(e){toast(e.message,true)}
   })
 }
 
