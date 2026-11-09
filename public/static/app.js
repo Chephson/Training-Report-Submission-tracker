@@ -390,7 +390,7 @@ async function renderTracker(el) {
     rows=rows.filter(r=>(status==='all'||(status==='submitted'?!!r.submitted_at:!r.submitted_at))&&(!q||[r.full_name,r.email,r.team,r.programme].some(x=>String(x||'').toLowerCase().includes(q))))
     const assigned=results.reduce((n,d)=>n+d.assigned,0),submitted=results.reduce((n,d)=>n+d.submitted,0)
     $('#tr-programme-summary').innerHTML='<strong>'+selectedProgrammes.length+' programme(s) · '+assigned+' assigned · '+submitted+' submitted · '+(assigned-submitted)+' outstanding</strong><p class="muted tiny">'+rows.length+' matching staff–programme assignments shown below</p>'
-    $('#tr-table').innerHTML='<div class="table-wrap"><table><thead><tr><th>Training programme</th><th>Staff member</th><th>Email</th><th>Team</th><th>Report status</th><th>Date submitted</th></tr></thead><tbody>'+rows.map(r=>'<tr><td>'+esc(r.programme)+'</td><td><strong>'+esc(r.full_name)+'</strong></td><td>'+esc(r.email)+'</td><td>'+esc(r.team||'—')+'</td><td>'+(r.submitted_at?'Submitted':'Outstanding')+'</td><td>'+(r.submitted_at?fmtDateTime(r.submitted_at):'—')+'</td></tr>').join('')+(rows.length?'':'<tr><td colspan="6">No assignments match these filters.</td></tr>')+'</tbody></table></div>'
+    $('#tr-table').innerHTML='<div class="table-wrap"><table><thead><tr><th>Training programme</th><th>Staff member</th><th>Email</th><th>Division</th><th>Report status</th><th>Date submitted</th></tr></thead><tbody>'+rows.map(r=>'<tr><td>'+esc(r.programme)+'</td><td><strong>'+esc(r.full_name)+'</strong></td><td>'+esc(r.email)+'</td><td>'+esc(r.team||'—')+'</td><td>'+(r.submitted_at?'Submitted':'Outstanding')+'</td><td>'+(r.submitted_at?fmtDateTime(r.submitted_at):'—')+'</td></tr>').join('')+(rows.length?'':'<tr><td colspan="6">No assignments match these filters.</td></tr>')+'</tbody></table></div>'
     $('#tr-export-programme').onclick=()=>{const cols=[['Training programme','Staff member','Email','Team','Status','Submitted at'],...rows.map(r=>[r.programme,r.full_name,r.email,r.team||'',r.submitted_at?'Submitted':'Outstanding',r.submitted_at||''])];const csv=cols.map(row=>row.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='programme-report-status.csv';a.click();URL.revokeObjectURL(url)}
   }
   $('#tr-programme').onchange=refresh
@@ -831,7 +831,7 @@ async function renderOutstandingReports(el) {
   $('#out-search').addEventListener('input',draw)
   $('#out-programme').addEventListener('change',draw)
   $('#out-export').onclick=()=>{
-    const rows=[['Employee','Email','Team','Programme','Status'],...filtered().map(r=>[r.name,r.email,r.team,r.programme,r.status])]
+    const rows=[['Employee','Email','Division','Programme','Status'],...filtered().map(r=>[r.name,r.email,r.team,r.programme,r.status])]
     const csv=rows.map(row=>row.map(value=>{
       const safe=String(value??'').replace(/^\s*[=+@-]/,m=>"'"+m)
       return '"'+safe.replace(/"/g,'""')+'"'
@@ -1060,7 +1060,7 @@ async function renderTrainingHistory(el) {
     renderTrainingHistory($('#view'))
   })
   $('#history-export').addEventListener('click', () => {
-    const headers = ['Staff member', 'Email', 'Team', 'Training programme', 'Reporting period', 'Training start date', 'Duration (days)', 'Date submitted', 'Submission channel']
+    const headers = ['Staff member', 'Email', 'Division', 'Training programme', 'Reporting period', 'Training start date', 'Duration (days)', 'Date submitted', 'Submission channel']
     const csv = [headers, ...records.map((r) => [r.full_name, r.email, r.team || '', r.training_programme || '', r.period_name || '', r.training_start_date || '', r.duration_days || '', r.submitted_at || '', r.source || ''])]
       .map((row) => row.map((v) => '"' + String(v ?? '').replace(/"/g, '""') + '"').join(',')).join('\r\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
@@ -1074,11 +1074,13 @@ async function renderRoster(el) {
   state.staff = staff || []
 
   $('#topbar-actions').innerHTML = `
-    <button class="btn" id="r-import">${ico('upload', 15)} Import list</button>
+    <button class="btn" id="r-directory">Manage divisions & departments</button>
+     <button class="btn" id="r-import">${ico('upload', 15)} Import list</button>
     <button class="btn btn-primary" id="r-add">${ico('plus', 15)} Add staff member</button>`
 
   $('#r-add').addEventListener('click', () => staffModal())
   $('#r-import').addEventListener('click', () => rosterImportModal())
+  $('#r-directory').addEventListener('click', () => staffDirectoryModal())
 
   el.innerHTML = `
     <div class="card">
@@ -1089,7 +1091,7 @@ async function renderRoster(el) {
       ${
         staff.length
           ? `<div class="table-wrap"><table>
-              <thead><tr><th>Name</th><th>Email</th><th>Team</th><th>Role</th><th></th></tr></thead>
+              <thead><tr><th>Name</th><th>Email</th><th>Division</th><th>Department</th><th></th></tr></thead>
               <tbody>${staff
                 .map(
                   (s) => `<tr>
@@ -1135,49 +1137,69 @@ async function renderRoster(el) {
   )
 }
 
-function staffModal(person) {
+async function staffDirectoryModal() {
+  let directories
+  try {
+    const [divisions, departments] = await Promise.all([api('/staff-directory/divisions'), api('/staff-directory/departments')])
+    directories = { divisions: divisions.options || [], departments: departments.options || [] }
+  } catch (e) { toast(e.message, true); return }
+  const m = modal({ title: 'Manage divisions and departments', wide: true,
+    body: '<p class="tiny muted mb-12">Add, rename or remove organisational entries. Renaming updates existing staff assignments; entries assigned to staff cannot be removed.</p><div id="directory-content"></div>',
+    footer: '<button class="btn" data-close>Close</button>' })
+  const render = () => {
+    m.$('#directory-content').innerHTML = ['divisions','departments'].map(kind => `<div class="card mb-12"><div class="card-head"><h3>${kind === 'divisions' ? 'Divisions' : 'Departments'}</h3></div><div class="card-body"><div class="row" style="gap:8px"><input type="text" data-new="${kind}" placeholder="New ${kind === 'divisions' ? 'division' : 'department'}" maxlength="120"><button class="btn btn-primary" data-add="${kind}">Add</button></div><div class="mt-12">${directories[kind].map(name => `<div class="row mb-8" style="gap:8px;align-items:center"><span style="flex:1">${esc(name)}</span><button class="btn btn-sm" data-rename="${kind}" data-name="${esc(name)}">Rename</button><button class="btn btn-sm btn-ghost" data-remove="${kind}" data-name="${esc(name)}">Remove</button></div>`).join('') || '<p class="tiny muted">No entries yet.</p>'}</div></div></div>`).join('')
+  }
+  // Event delegation allows refresh without losing controls.
+  m.$('#directory-content').addEventListener('click', async e => {
+    const btn = e.target.closest('button[data-add],button[data-rename],button[data-remove]')
+    if (!btn) return
+    const kind = btn.dataset.add || btn.dataset.rename || btn.dataset.remove
+    const oldName = btn.dataset.name
+    let name
+    if (btn.dataset.add) name = m.$('[data-new="' + kind + '"]').value.trim()
+    else if (btn.dataset.rename) name = prompt('New name', oldName)?.trim()
+    else if (!confirm('Remove ' + oldName + '? Entries currently assigned to staff cannot be removed.')) return
+    if (btn.dataset.add || btn.dataset.rename) {
+      if (!name) return toast('Enter a name', true)
+    }
+    btn.disabled = true
+    try {
+      if (btn.dataset.add) await api('/staff-directory/' + kind, { method:'POST', body: JSON.stringify({ name }) })
+      else if (btn.dataset.rename) await api('/staff-directory/' + kind, { method:'PATCH', body: JSON.stringify({ old_name:oldName, name }) })
+      else await api('/staff-directory/' + kind + '?name=' + encodeURIComponent(oldName), { method:'DELETE' })
+      const updated = await api('/staff-directory/' + kind)
+      directories[kind] = updated.options || []
+      render(); toast('Directory updated')
+    } catch(err) { toast(err.message, true); btn.disabled = false }
+  })
+  render()
+}
+
+async function staffModal(person) {
   const p = person || {}
+  let directories
+  try {
+    const [divisions, departments] = await Promise.all([api('/staff-directory/divisions'),api('/staff-directory/departments')])
+    directories = { divisions: divisions.options || [], departments: departments.options || [] }
+  } catch (e) { toast(e.message, true); return }
+  const select = (kind, id, current) => `<label class="field"><span>${kind === 'divisions' ? 'Division' : 'Department'}</span><select id="${id}"><option value="">— Select ${kind === 'divisions' ? 'division' : 'department'} —</option>${directories[kind].map(name => `<option value="${esc(name)}"${name === current ? ' selected' : ''}>${esc(name)}</option>`).join('')}</select></label>`
   const m = modal({
     title: person ? 'Edit staff member' : 'Add staff member',
-    body: `
-      <label class="field"><span>Full name</span>
-        <input type="text" id="s-name" value="${esc(p.full_name || '')}" placeholder="e.g. Amina Yusuf" /></label>
-      <label class="field"><span>Email address</span>
-        <input type="email" id="s-email" value="${esc(p.email || '')}" placeholder="name@organisation.org" />
-        <small>This must match the email they use on the form. It is the most reliable way to match submissions.</small></label>
-      <div class="grid grid-2">
-        <label class="field"><span>Team</span>
-          <input type="text" id="s-team" value="${esc(p.team || '')}" placeholder="e.g. Science" /></label>
-        <label class="field"><span>Role</span>
-          <input type="text" id="s-role" value="${esc(p.role || '')}" placeholder="e.g. Teacher" /></label>
-      </div>
-      ${
-        person
-          ? `<label class="field row" style="gap:8px"><input type="checkbox" id="s-active" style="width:auto" ${
-              p.active ? 'checked' : ''
-            } /><span style="margin:0">Active — still required to submit reports</span></label>`
-          : ''
-      }`,
+    body: `<label class="field"><span>Full name</span><input type="text" id="s-name" value="${esc(p.full_name || '')}" placeholder="e.g. Amina Yusuf" /></label>
+      <label class="field"><span>Email address</span><input type="email" id="s-email" value="${esc(p.email || '')}" placeholder="name@organisation.org" /><small>This must match the email used on the report form.</small></label>
+      <div class="grid grid-2">${select('divisions','s-team',p.team || '')}${select('departments','s-role',p.role || '')}</div>
+      <p class="tiny muted">To change the available choices, use Manage divisions & departments on the Staff Roster page.</p>
+      ${person ? `<label class="field row" style="gap:8px"><input type="checkbox" id="s-active" style="width:auto" ${p.active ? 'checked' : ''} /><span style="margin:0">Active — still required to submit reports</span></label>` : ''}`,
     footer: `<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="s-save">${person ? 'Save changes' : 'Add to roster'}</button>`,
   })
-
   m.$('#s-save').addEventListener('click', async () => {
-    const body = {
-      full_name: m.$('#s-name').value.trim(),
-      email: m.$('#s-email').value.trim(),
-      team: m.$('#s-team').value.trim(),
-      role: m.$('#s-role').value.trim(),
-    }
+    const body = { full_name:m.$('#s-name').value.trim(),email:m.$('#s-email').value.trim(),team:m.$('#s-team').value,role:m.$('#s-role').value }
     if (person && m.$('#s-active')) body.active = m.$('#s-active').checked ? 1 : 0
     try {
-      if (person) await api('/staff/' + person.id, { method: 'PATCH', body: JSON.stringify(body) })
-      else await api('/staff', { method: 'POST', body: JSON.stringify(body) })
-      m.close()
-      toast(person ? 'Saved' : 'Added to roster')
-      navigate('roster', true)
-    } catch (e) {
-      toast(e.message, true)
-    }
+      if (person) await api('/staff/' + person.id, { method:'PATCH',body:JSON.stringify(body) })
+      else await api('/staff', { method:'POST',body:JSON.stringify(body) })
+      m.close(); toast(person ? 'Saved' : 'Added to roster'); navigate('roster',true)
+    } catch(e) { toast(e.message,true) }
   })
 }
 
@@ -1185,12 +1207,12 @@ function rosterImportModal() {
   const m = modal({
     title: 'Import staff list',
     body: `
-      <p class="tiny muted mb-12">Paste a CSV, or upload a file. It needs a <strong>name</strong> column and an <strong>email</strong> column; <em>team</em> and <em>role</em> columns are optional.</p>
+      <p class="tiny muted mb-12">Paste a CSV, or upload a file. It needs a <strong>name</strong> column and an <strong>email</strong> column; <em>division</em> and <em>department</em> columns are optional.</p>
       <div class="row mb-12" style="gap:8px">
         <button class="btn btn-sm" id="pick-file">Choose file…</button>
         <span class="tiny muted" id="file-label">No file chosen</span>
       </div>
-      <textarea id="csv" placeholder="full_name,email,team
+      <textarea id="csv" placeholder="full_name,email,division
 Amina Yusuf,amina.yusuf@example.org,Science
 David Okafor,david.okafor@example.org,Mathematics"></textarea>
       <input type="file" id="rf" accept=".csv,.tsv,.txt" hidden />`,
