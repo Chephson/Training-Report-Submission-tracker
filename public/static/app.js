@@ -1174,6 +1174,7 @@ async function renderTrainingHistory(el) {
 async function renderRoster(el) {
   const { staff } = await api('/staff')
   state.staff = staff || []
+  state.cadres = (await api('/hcot/cadres')).cadres || []
 
   $('#topbar-actions').innerHTML = `
     <button class="btn" id="r-directory">Manage divisions, departments & units</button>
@@ -1193,7 +1194,7 @@ async function renderRoster(el) {
       ${
         staff.length
           ? `<div class="table-wrap"><table>
-              <thead><tr><th>Name</th><th>Email</th><th>Division</th><th>Department</th><th>Unit</th><th></th></tr></thead>
+              <thead><tr><th>Name</th><th>Email</th><th>Division</th><th>Department</th><th>Unit</th><th>Cadre</th><th></th></tr></thead>
               <tbody>${staff
                 .map(
                   (s) => `<tr>
@@ -1204,7 +1205,7 @@ async function renderRoster(el) {
                     <td class="tiny muted">${esc(s.email)}</td>
                     <td class="tiny muted">${esc(s.team || '—')}</td>
                     <td class="tiny muted">${esc(s.role || '—')}</td>
-                    <td class="tiny muted">${esc(s.unit || '—')}</td>
+                    <td class="tiny muted">${esc(s.unit || '—')}</td><td class="tiny muted">${esc((state.cadres||[]).find(c=>c.id===s.cadre_id)?.name||'Unassigned')}</td>
                     <td style="text-align:right;white-space:nowrap">
                       <button class="btn btn-sm btn-ghost" data-history="${s.id}">History</button>
                       <button class="btn btn-sm btn-ghost" data-edit="${s.id}">Edit</button>
@@ -1296,14 +1297,15 @@ async function staffDirectoryModal() {
 
 async function staffModal(person) {
   const p=person||{}
-  let divisions=[]
-  try{divisions=(await api('/staff-directory/divisions')).options||[]}catch(e){toast(e.message,true);return}
+  let divisions=[],cadres=[]
+  try{divisions=(await api('/staff-directory/divisions')).options||[];cadres=(await api('/hcot/cadres')).cadres||[]}catch(e){toast(e.message,true);return}
   const m=modal({title:person?'Edit staff member':'Add staff member',body:`
     <label class="field"><span>Full name</span><input id="s-name" type="text" value="${esc(p.full_name||'')}" placeholder="Full name"></label>
     <label class="field"><span>Email address</span><input id="s-email" type="email" value="${esc(p.email||'')}" placeholder="name@organisation.org"></label>
     <div class="grid grid-2"><label class="field"><span>Division</span><select id="s-team"><option value="">Select division</option>${divisions.map(name=>`<option value="${esc(name)}"${name===p.team?' selected':''}>${esc(name)}</option>`).join('')}</select></label>
     <label class="field"><span>Department</span><select id="s-role" disabled><option value="">Select a division first</option></select></label></div>
     <label class="field"><span>Unit (optional)</span><select id="s-unit" disabled><option value="">Select a department first</option></select><small>Leave blank if the department has no units or a unit does not apply.</small></label>
+    <label class="field"><span>Staff cadre</span><select id="s-cadre"><option value="">Unassigned</option>${cadres.filter(x=>x.active).map(x=>`<option value="${x.id}"${String(x.id)===String(p.cadre_id)?' selected':''}>${esc(x.name)}</option>`).join('')}</select></label>
     <p class="tiny muted">Departments depend on the division; units depend on the department. Manage choices from the Staff Roster page.</p>
     ${person?`<label class="field row" style="gap:8px"><input type="checkbox" id="s-active" style="width:auto" ${p.active?'checked':''}><span>Active — still required to submit reports</span></label>`:''}`,
     footer:`<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="s-save">${person?'Save changes':'Add to roster'}</button>`})
@@ -1337,6 +1339,7 @@ async function staffModal(person) {
     try{
       if(person)await api('/staff/'+person.id,{method:'PATCH',body:JSON.stringify(body)})
       else await api('/staff',{method:'POST',body:JSON.stringify(body)})
+      if(person && String(m.$('#s-cadre').value||'')!==String(p.cadre_id||''))await api('/hcot/staff/'+person.id+'/cadre',{method:'PATCH',body:JSON.stringify({cadre_id:m.$('#s-cadre').value?Number(m.$('#s-cadre').value):null})})
       m.close();toast(person?'Saved':'Added to roster');navigate('roster',true)
     }catch(e){toast(e.message,true)}
   })
