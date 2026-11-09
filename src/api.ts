@@ -503,9 +503,11 @@ api.post('/staff/import', async (c) => {
     const res = await c.env.DB.prepare(
       `INSERT INTO staff (full_name, email, team, role, unit, active) VALUES (?, ?, ?, ?, ?, 1)
        ON CONFLICT(email) DO UPDATE SET full_name = excluded.full_name,
-         team = COALESCE(excluded.team, staff.team), role = COALESCE(excluded.role, staff.role), unit = COALESCE(excluded.unit, staff.unit)`
+         team = CASE WHEN ? = 1 THEN excluded.team ELSE staff.team END,
+         role = CASE WHEN ? = 1 THEN excluded.role ELSE staff.role END,
+         unit = CASE WHEN ? = 1 THEN excluded.unit ELSE staff.unit END`
     )
-      .bind(name, email, division || null, department || null, unit || null)
+      .bind(name, email, division || null, department || null, unit || null, cTeam >= 0 ? 1 : 0, cRole >= 0 ? 1 : 0, cUnit >= 0 ? 1 : 0)
       .run()
     if (res.meta.changes) added++
   }
