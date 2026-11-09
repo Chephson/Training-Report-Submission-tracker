@@ -942,7 +942,7 @@ async function renderHCOTSection(section) {
         rd.onchange=async()=>{rdept.innerHTML=options(rd.value?(await api('/staff-directory/departments?division='+encodeURIComponent(rd.value))).options||[]:[],'All departments');rdept.disabled=!rd.value;ru.innerHTML=options([],'All units');ru.disabled=true}
         rdept.onchange=async()=>{ru.innerHTML=options(rd.value&&rdept.value?(await api('/staff-directory/units?division='+encodeURIComponent(rd.value)+'&department='+encodeURIComponent(rdept.value))).options||[]:[],'All units');ru.disabled=!rdept.value}
         $('#hcot-rule-create').onclick=async()=>{try{await api('/hcot/cadre-competencies',{method:'POST',body:JSON.stringify({cadre_id:Number($('#hcot-rule-cadre').value),competency_id:Number(ruleComp.value),division:rd.value,department:rdept.value,unit:ru.value})});toast('Cadre competency mapped');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
-        $('.hcot-rule-remove').forEach(btn=>btn.onclick=async()=>{if(!confirm('Remove this cadre competency rule? Staff will no longer inherit it unless another rule applies.'))return;try{await api('/hcot/cadre-competencies/'+btn.dataset.id,{method:'DELETE'});toast('Rule removed');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}})
+        $$('.hcot-rule-remove').forEach(btn=>btn.onclick=async()=>{if(!confirm('Remove this cadre competency rule? Staff will no longer inherit it unless another rule applies.'))return;try{await api('/hcot/cadre-competencies/'+btn.dataset.id,{method:'DELETE'});toast('Rule removed');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}})
       }
       if(isAdmin){
         const division=$('#hcot-comp-div'),department=$('#hcot-comp-dept'),unit=$('#hcot-comp-unit')
