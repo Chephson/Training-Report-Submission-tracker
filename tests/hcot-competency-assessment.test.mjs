@@ -66,13 +66,13 @@ test('competency group CSV bulk upload is admin-gated and validates scoped mappi
  assert.match(api,/INSERT OR IGNORE INTO hcot_cadre_group_scopes/)
  assert.match(ui,/id="hcg-upload-file"/)
  assert.match(ui,/hcot-competency-group-mapping-template\.csv/)
- assert.match(ui,/competency_group,group_description,competency_name,cadre,division,department,unit/)
+ assert.match(ui,/competency_group,group_description,competency_name,competency_category,cadre,division,department,unit/)
 })
 
-test('bulk upload explicitly validates scope and prevents duplicate competency groups',()=>{
- assert.match(ui,/competency_group,group_description,competency_name,cadre,division,department,unit,scope/)
- assert.match(api,/const allowedScopes=/)
- assert.match(api,/scope \$\{level\} does not match/)
+test('bulk upload validates competency category and prevents duplicate competency groups',()=>{
+ assert.match(ui,/competency_group,group_description,competency_name,competency_category,cadre,division,department,unit/)
+ assert.match(api,/competency category must be Core or Functional/)
+ assert.match(api,/must match its existing classification/)
  assert.match(api,/WHERE LOWER\(TRIM\(name\)\)=LOWER\(TRIM\(\?\)\)/)
  assert.match(api,/A competency group with this name already exists/)
  assert.match(api,/INSERT INTO hcot_competency_groups\(name,description\) SELECT/)
