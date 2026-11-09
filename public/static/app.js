@@ -932,7 +932,7 @@ async function renderHCOTSection(section) {
           await refreshUnits()
         }
         department.onchange=refreshUnits
-        $('.hcot-comp-edit').forEach(btn=>btn.onclick=async()=>{
+        $$('.hcot-comp-edit').forEach(btn=>btn.onclick=async()=>{
           const c=comps.find(x=>String(x.id)===btn.dataset.id)
           if(!c)return
           const name=prompt('Edit competency name',c.name)
@@ -952,7 +952,7 @@ async function renderHCOTSection(section) {
             toast('Competency updated');renderHCOTSection('competencies')
           }catch(e){toast(e.message,true)}
         })
-        $('.hcot-comp-delete').forEach(btn=>btn.onclick=async()=>{
+        $$('.hcot-comp-delete').forEach(btn=>btn.onclick=async()=>{
           const c=comps.find(x=>String(x.id)===btn.dataset.id)
           if(!c||!confirm('Delete competency "'+c.name+'"? This cannot be undone. Assigned competencies must be unmapped first.'))return
           try{await api('/hcot/competencies/'+c.id,{method:'DELETE'});toast('Competency deleted');renderHCOTSection('competencies')}
