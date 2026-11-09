@@ -900,12 +900,57 @@ async function renderHCOTSection(section) {
         (data.plans||[]).map(x=>'<tr><td>'+esc(x.title)+'</td><td>'+esc(x.start_date||'—')+' – '+esc(x.end_date||'—')+'</td><td>'+esc(x.location||'—')+'</td><td>'+x.participants+'</td></tr>').join('')+
         (data.plans.length?'':'<tr><td colspan="4">No training plans scheduled for this year.</td></tr>')+'</tbody></table></div></div>'
     }else if(section==='competencies'){
-      const isAdmin=(await api('/hcot/access-session')).role==='admin'
-      const data=await api('/hcot/competencies')
-      el.innerHTML='<div class="card"><div class="card-head"><h3>Competency library</h3></div>'+(isAdmin?'<div class="card-body"><label class="field"><span>Competency name</span><input id="hcot-comp-name"></label><label class="field"><span>Category</span><select id="hcot-comp-cat"><option value="core">Core</option><option value="functional">Functional</option></select></label><label class="field"><span>Division</span><input id="hcot-comp-div"></label><label class="field"><span>Unit</span><input id="hcot-comp-unit"></label><label class="field"><span>Description</span><textarea id="hcot-comp-desc"></textarea></label><button class="btn btn-primary" id="hcot-comp-add">Add competency</button></div>':'')+'<div class="table-wrap"><table><thead><tr><th>Competency</th><th>Category</th><th>Division / unit</th></tr></thead><tbody>'+
-        data.competencies.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+esc(x.category)+'</td><td>'+esc([x.division,x.unit].filter(Boolean).join(' / ')||'Organisation-wide')+'</td></tr>').join('')+
-        (data.competencies.length?'':'<tr><td colspan="3">No competencies entered.</td></tr>')+'</tbody></table></div></div>'
-      if(isAdmin)$('#hcot-comp-add').onclick=async()=>{try{await api('/hcot/competencies',{method:'POST',body:JSON.stringify({name:$('#hcot-comp-name').value,category:$('#hcot-comp-cat').value,division:$('#hcot-comp-div').value,unit:$('#hcot-comp-unit').value,description:$('#hcot-comp-desc').value})});toast('Competency added');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
+      const [session, catalogue, roster, mapped, divisionsData]=await Promise.all([
+        api('/hcot/access-session'),api('/hcot/competencies'),api('/hcot/competency-staff'),api('/hcot/competency-mappings'),api('/staff-directory/divisions')
+      ])
+      const isAdmin=session.role==='admin', comps=catalogue.competencies||[],staff=roster.staff||[],mappings=mapped.mappings||[],divisions=divisionsData.options||[]
+      const options=(values,empty)=>'<option value="">'+empty+'</option>'+values.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join('')
+      const orgLabel=c=>[c.division,c.department,c.unit].filter(Boolean).join(' / ')||'Organisation-wide'
+      el.innerHTML='<div class="card"><div class="card-head"><h3>Competency library & staff mapping</h3></div>'+
+        (isAdmin?'<div class="card-body"><h4>Add competency</h4><label class="field"><span>Competency name</span><input id="hcot-comp-name" maxlength="200"></label><label class="field"><span>Category</span><select id="hcot-comp-cat"><option value="core">Core</option><option value="functional">Functional</option></select></label><label class="field"><span>Division (optional)</span><select id="hcot-comp-div">'+options(divisions,'Organisation-wide')+'</select></label><label class="field"><span>Department (optional)</span><select id="hcot-comp-dept" disabled><option value="">All departments</option></select></label><label class="field"><span>Unit (optional)</span><select id="hcot-comp-unit" disabled><option value="">All units / not applicable</option></select></label><label class="field"><span>Description</span><textarea id="hcot-comp-desc"></textarea></label><button class="btn btn-primary" id="hcot-comp-add">Add competency</button></div>':'')+
+        '<div class="table-wrap"><table><thead><tr><th>Competency</th><th>Category</th><th>Organisational scope</th><th>Assigned staff</th></tr></thead><tbody>'+
+        comps.map(c=>'<tr><td>'+esc(c.name)+'</td><td>'+esc(c.category)+'</td><td>'+esc(orgLabel(c))+'</td><td>'+mappings.filter(m=>m.competency_id===c.id).length+'</td></tr>').join('')+
+        (comps.length?'':'<tr><td colspan="4">No competencies entered.</td></tr>')+'</tbody></table></div></div>'+
+        '<div class="card mt-16"><div class="card-head"><h3>Staff competency assignments</h3></div>'+
+        (isAdmin?'<div class="card-body"><label class="field"><span>Staff member (central Staff Roster)</span><select id="hcot-map-staff">'+options(staff.filter(x=>x.active===1).map(x=>String(x.id)),'Select staff')+'</select></label><div id="hcot-map-staff-label" class="tiny muted"></div><label class="field"><span>Matching competency</span><select id="hcot-map-comp"><option value="">Select staff first</option></select></label><button class="btn btn-primary" id="hcot-map-add">Assign competency</button></div>':'')+
+        '<div class="table-wrap"><table><thead><tr><th>Staff</th><th>Competency</th><th>Action</th></tr></thead><tbody>'+
+        mappings.map(m=>'<tr><td>'+esc(m.full_name)+'</td><td>'+esc(m.competency_name)+'</td><td>'+(isAdmin?'<button class="btn btn-sm hcot-map-remove" data-staff="'+m.staff_id+'" data-comp="'+m.competency_id+'">Remove</button>':'—')+'</td></tr>').join('')+
+        (mappings.length?'':'<tr><td colspan="3">No staff competencies mapped.</td></tr>')+'</tbody></table></div></div>'
+      if(isAdmin){
+        const division=$('#hcot-comp-div'),department=$('#hcot-comp-dept'),unit=$('#hcot-comp-unit')
+        const refreshUnits=async()=>{
+          unit.innerHTML=options(division.value&&department.value?(await api('/staff-directory/units?division='+encodeURIComponent(division.value)+'&department='+encodeURIComponent(department.value))).options||[]:[],'All units / not applicable')
+          unit.disabled=!department.value
+        }
+        division.onchange=async()=>{
+          department.innerHTML=options(division.value?(await api('/staff-directory/departments?division='+encodeURIComponent(division.value))).options||[]:[],'All departments')
+          department.disabled=!division.value
+          await refreshUnits()
+        }
+        department.onchange=refreshUnits
+        $('#hcot-comp-add').onclick=async()=>{try{
+          await api('/hcot/competencies',{method:'POST',body:JSON.stringify({name:$('#hcot-comp-name').value,category:$('#hcot-comp-cat').value,division:division.value,department:department.value,unit:unit.value,description:$('#hcot-comp-desc').value})})
+          toast('Competency added');renderHCOTSection('competencies')
+        }catch(e){toast(e.message,true)}}
+        const staffSelect=$('#hcot-map-staff'),compSelect=$('#hcot-map-comp')
+        staffSelect.querySelectorAll('option').forEach(o=>{if(o.value){const x=staff.find(s=>String(s.id)===o.value);o.textContent=x.full_name+' ('+x.email+')'}})
+        staffSelect.onchange=()=>{
+          const st=staff.find(x=>String(x.id)===staffSelect.value)
+          $('#hcot-map-staff-label').textContent=st?[st.division,st.department,st.unit].filter(Boolean).join(' / ')||'No organisational assignment':''
+          const eq=(a,b)=>String(a||'').trim().toLowerCase()===String(b||'').trim().toLowerCase()
+          const eligible=st?comps.filter(c=>(!c.division||eq(c.division,st.division))&&(!c.department||eq(c.department,st.department))&&(!c.unit||eq(c.unit,st.unit))):[]
+          compSelect.innerHTML=options(eligible.map(c=>String(c.id)),'Select matching competency')
+          compSelect.querySelectorAll('option').forEach(o=>{if(o.value){const c=comps.find(x=>String(x.id)===o.value);o.textContent=c.name+' — '+orgLabel(c)}})
+        }
+        $('#hcot-map-add').onclick=async()=>{try{
+          await api('/hcot/competency-mappings',{method:'POST',body:JSON.stringify({staff_id:Number(staffSelect.value),competency_id:Number(compSelect.value)})})
+          toast('Competency assigned');renderHCOTSection('competencies')
+        }catch(e){toast(e.message,true)}}
+        $$('.hcot-map-remove').forEach(btn=>btn.onclick=async()=>{try{
+          await api('/hcot/competency-mappings?staff_id='+encodeURIComponent(btn.dataset.staff)+'&competency_id='+encodeURIComponent(btn.dataset.comp),{method:'DELETE'})
+          toast('Assignment removed');renderHCOTSection('competencies')
+        }catch(e){toast(e.message,true)}})
+      }
     }else if(section==='goals'){
       const data=await api('/hcot/goals')
       el.innerHTML='<div class="card"><div class="card-head"><h3>Development goals</h3></div><div class="card-body"><label class="field"><span>Goal title</span><input id="hcot-goal-title"></label><label class="field"><span>Scope</span><select id="hcot-goal-scope"><option value="unit">Unit</option><option value="individual">Individual</option></select></label><label class="field"><span>Owner / unit label</span><input id="hcot-goal-owner"></label><label class="field"><span>Target date</span><input type="date" id="hcot-goal-date"></label><label class="field"><span>Measure / KPI</span><input id="hcot-goal-measure"></label><label class="field"><span>Target value</span><input id="hcot-goal-value"></label><button class="btn btn-primary" id="hcot-goal-add">Add draft goal</button></div><div class="table-wrap"><table><thead><tr><th>Goal</th><th>Scope</th><th>Owner</th><th>Target</th></tr></thead><tbody>'+
