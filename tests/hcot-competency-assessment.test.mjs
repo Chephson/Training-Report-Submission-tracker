@@ -57,3 +57,14 @@ test('cadre group mapping supports optional organisational scopes without losing
  assert.match(ui,/same\(x.department,data.staff.role\)/)
  assert.match(ui,/same\(x.unit,data.staff.unit\)/)
 })
+
+test('competency group CSV bulk upload is admin-gated and validates scoped mapping rows',()=>{
+ assert.match(api,/api.post\('\/hcot\/competency-groups\/import'/)
+ assert.match(api,/isHcotCompetencyAdmin\(c,session.email\)/)
+ assert.match(api,/validateStaffDirectory\(c.env.DB,div\|\|null,dept\|\|null,unt\|\|null\)/)
+ assert.match(api,/Conflicting group assignments/)
+ assert.match(api,/INSERT OR IGNORE INTO hcot_cadre_group_scopes/)
+ assert.match(ui,/id="hcg-upload-file"/)
+ assert.match(ui,/hcot-competency-group-mapping-template\.csv/)
+ assert.match(ui,/competency_group,group_description,competency_name,cadre,division,department,unit/)
+})
