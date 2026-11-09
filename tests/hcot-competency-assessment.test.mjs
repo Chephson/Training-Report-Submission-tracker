@@ -32,3 +32,14 @@ test('roster bulk template includes cadre and import resolves existing active ca
  assert.match(api,/INSERT INTO staff \(full_name, email, team, role, unit, cadre_id, active\)/);
  assert.match(api,/cadre_id = CASE WHEN \? = 1 THEN excluded.cadre_id ELSE staff.cadre_id END/);
 });
+
+test('competency group hierarchy and assessment group-first workflow',()=>{
+ assert.match(db,/CREATE TABLE IF NOT EXISTS hcot_competency_groups/);
+ assert.match(db,/CREATE TABLE IF NOT EXISTS hcot_group_competencies/);
+ assert.match(db,/CREATE TABLE IF NOT EXISTS hcot_cadre_groups/);
+ assert.match(api,/api.post\('\/hcot\/competency-groups\/assign-cadre'/);
+ assert.match(api,/api.post\('\/hcot\/competency-groups\/assign-competency'/);
+ assert.match(ui,/id="hca-group"/);
+ assert.match(ui,/hca-group-items/);
+ assert.match(ui,/hcg-link-cadre/);
+});
