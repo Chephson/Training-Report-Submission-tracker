@@ -914,7 +914,7 @@ async function renderHCOTSection(section) {
             '<h4 class="mt-16">Assessment history</h4><div class="table-wrap"><table><thead><tr><th>Cycle</th><th>Competency</th><th>Score</th><th>Target</th><th>Gap</th><th>Assessor</th><th>Date</th></tr></thead><tbody>'+
             history.map(x=>'<tr><td>'+esc(x.cycle)+'</td><td>'+esc(x.competency_name)+'</td><td>'+x.score+'</td><td>'+x.target_score+'</td><td>'+Math.max(0,x.target_score-x.score)+'</td><td>'+esc(x.assessor_email)+'</td><td>'+esc(x.assessed_at)+'</td></tr>').join('')+
             (history.length?'':'<tr><td colspan="7">No assessments recorded.</td></tr>')+'</tbody></table></div>'
-          $('.hca-save').forEach(btn=>btn.onclick=async()=>{
+          $$('.hca-save').forEach(btn=>btn.onclick=async()=>{
             const competencyId=Number(btn.dataset.id),input=$('.hca-score[data-id="'+competencyId+'"]'),notes=$('.hca-notes[data-id="'+competencyId+'"]')
             const score=Number(input.value),target=Number($('#hca-target').value),cycle=$('#hca-cycle').value.trim()
             if(!input.value||!Number.isInteger(score)||score<0||score>100||!Number.isInteger(target)||target<0||target>100||!cycle){toast('Enter an assessment cycle and valid whole-number score and target (0–100).',true);return}
