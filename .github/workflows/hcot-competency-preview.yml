@@ -1,6 +1,11 @@
 name: Controlled HCOT competency mapping Preview (manual)
 
 on:
+  push:
+    branches:
+      - feature/hcot-staff-competency-mapping
+    paths:
+      - .github/workflows/hcot-competency-preview.yml
   workflow_dispatch:
 
 permissions:
