@@ -6,6 +6,7 @@ on:
       - feature/hcot-stage1-roster-integration
       - fix/hcot-preview-secure-access-bootstrap
       - feature/hcot-staff-competency-mapping
+      - feature/hcot-competency-edit-delete
   pull_request:
     branches:
       - main
