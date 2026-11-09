@@ -952,7 +952,7 @@ async function renderHCOTSection(section) {
         }
         const bulkFile=$('#hcot-bulk-file'),bulkCommit=$('#hcot-bulk-commit'),bulkResult=$('#hcot-bulk-result')
         $('#hcot-bulk-template').onclick=()=>{
-          const csv='competency_name,category,description,cadre,division,department,unit\\nRegulatory Analysis,functional,Interpret regulatory data,Senior Manager,Technical Regulation,Networks,\\n'
+          const csv='competency_name,category,description,cadre,division,department,unit\r\nRegulatory Analysis,functional,Interpret regulatory data,Senior Manager,Technical Regulation,Networks,\r\n'
           const blob=new Blob([csv],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a')
           a.href=url;a.download='hcot-cadre-competency-template.csv';a.click();URL.revokeObjectURL(url)
         }
