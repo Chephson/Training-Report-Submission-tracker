@@ -50,7 +50,9 @@ test('read-only HCOT viewer workspace never fetches the staff roster or renders 
 
 test('viewer competency library hides creation controls', () => {
   const section = ui.slice(ui.indexOf("}else if(section==='competencies'){"),ui.indexOf("}else if(section==='goals'){"))
-  assert.match(section, /const isAdmin=\(await api\('\/hcot\/access-session'\)\)\.role==='admin'/)
+  assert.match(section, /const session=await api\('\/hcot\/access-session'\)/)
+  assert.match(section, /const isAdmin=session\.role==='admin'/)
   assert.match(section, /\(isAdmin\?/)
-  assert.match(section, /if\(isAdmin\)\$\('#hcot-comp-add'\)/)
+  assert.match(section, /if\(isAdmin\)\{/)
+  assert.match(section, /isAdmin\?api\('\/hcot\/competency-staff'\):Promise\.resolve\(\{staff:\[\]\}\)/)
 })
