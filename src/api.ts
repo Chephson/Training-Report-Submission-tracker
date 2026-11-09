@@ -883,6 +883,8 @@ api.post('/hcot/competency-groups', async c => {
   const b=await c.req.json<{name?:string;description?:string}>().catch(()=>({}))
   const name=String(b.name||'').trim(),description=String(b.description||'').trim()
   if(!name||name.length>150||description.length>1000)return c.json({error:'Enter a valid group name (up to 150 characters).'},400)
+  const duplicate=await c.env.DB.prepare('SELECT id FROM hcot_competency_groups WHERE LOWER(TRIM(name))=LOWER(TRIM(?))').bind(name).first()
+  if(duplicate)return c.json({error:'A competency group with this name already exists. Select the existing group instead.'},409)
   try {const x=await c.env.DB.prepare('INSERT INTO hcot_competency_groups(name,description) VALUES (?,?)').bind(name,description||null).run();return c.json({ok:true,id:x.meta.last_row_id},201)}
   catch{return c.json({error:'Competency group already exists or could not be saved.'},409)}
 })
@@ -892,16 +894,21 @@ api.post('/hcot/competency-groups/import', async c => {
   const csv=await c.req.text()
   if(csv.length>1000000)return c.json({error:'CSV exceeds 1 MB.'},413)
   const {headers,rows}=parseDelimited(csv)
-  const keys=['competency_group','group_description','competency_name','cadre','division','department','unit']
+  const keys=['competency_group','group_description','competency_name','cadre','division','department','unit','scope']
   const indices=keys.map(k=>headers.findIndex(h=>h.replace(/^\uFEFF/,'').trim().toLowerCase().replace(/\s+/g,'_')===k))
   if(indices[0]<0||indices[2]<0||indices[3]<0)return c.json({error:'Required columns: competency_group, competency_name, cadre.'},400)
   if(!rows.length||rows.length>1000)return c.json({error:'Include 1–1000 data rows.'},400)
   const errors:string[]=[],prepared:{group:string;description:string;competencyId:number;cadreId:number;division:string|null;department:string|null;unit:string|null}[]=[]
   const groupCache=new Map<string,string>(),competencyCache=new Map<string,number>(),cadreCache=new Map<string,number>()
   for(const [i,row] of rows.entries()){
-    const [group,description,competencyName,cadreName,div,dept,unt]=indices.map(idx=>idx<0?'':String(row[idx]||'').trim())
+    const [group,description,competencyName,cadreName,div,dept,unt,rawScope]=indices.map(idx=>idx<0?'':String(row[idx]||'').trim())
+    const scope=(rawScope||(!div?'commission':!dept?'division':!unt?'department':'unit')).toLowerCase().replace(/[-_ ]/g,'')
+    const allowedScopes=['commission','commissionwide','organisationwide','organizationwide','division','department','unit']
+    if(!allowedScopes.includes(scope)){errors.push(`Row ${i+2}: invalid scope. Use Commission, Division, Department or Unit.`);continue}
+    const level=['commission','commissionwide','organisationwide','organizationwide'].includes(scope)?'commission':scope
+    if((level==='commission'&&(div||dept||unt))||(level==='division'&&(!div||dept||unt))||(level==='department'&&(!div||!dept||unt))||(level==='unit'&&(!div||!dept||!unt))){errors.push(`Row ${i+2}: scope ${level} does not match the supplied division, department and unit columns.`);continue}
     if(!group||group.length>150||description.length>1000||!competencyName||!cadreName){errors.push(`Row ${i+2}: group, competency and cadre are required; group name must be at most 150 characters.`);continue}
-    const key=group.toLowerCase(),old=groupCache.get(key)
+    const key=group.trim().toLowerCase(),old=groupCache.get(key)
     if(old!==undefined&&old!==description){errors.push(`Row ${i+2}: conflicting descriptions for group "${group}".`);continue}
     groupCache.set(key,description)
     const compKey=competencyName.toLowerCase(),cadreKey=cadreName.toLowerCase()
@@ -932,11 +939,11 @@ api.post('/hcot/competency-groups/import', async c => {
   const statements=[]
   for(const [group,description] of groupCache){
     const original=prepared.find(p=>p.group.toLowerCase()===group)!.group
-    statements.push(c.env.DB.prepare('INSERT OR IGNORE INTO hcot_competency_groups(name,description) VALUES (?,?)').bind(original,description||null))
+    statements.push(c.env.DB.prepare('INSERT INTO hcot_competency_groups(name,description) SELECT ?,? WHERE NOT EXISTS (SELECT 1 FROM hcot_competency_groups WHERE LOWER(TRIM(name))=LOWER(TRIM(?)))').bind(original,description||null,original))
   }
   await c.env.DB.batch(statements)
   const ids=new Map<string,number>()
-  for(const p of prepared){const key=p.group.toLowerCase();if(!ids.has(key)){const found=await c.env.DB.prepare('SELECT id FROM hcot_competency_groups WHERE LOWER(name)=LOWER(?)').bind(p.group).first<{id:number}>();if(!found)return c.json({error:'Unable to resolve imported group.'},500);ids.set(key,found.id)}}
+  for(const p of prepared){const key=p.group.toLowerCase();if(!ids.has(key)){const found=await c.env.DB.prepare('SELECT id FROM hcot_competency_groups WHERE LOWER(TRIM(name))=LOWER(TRIM(?))').bind(p.group).first<{id:number}>();if(!found)return c.json({error:'Unable to resolve imported group.'},500);ids.set(key,found.id)}}
   const writes=[]
   for(const p of prepared){const gid=ids.get(p.group.toLowerCase())!
     writes.push(c.env.DB.prepare('INSERT OR IGNORE INTO hcot_group_competencies(group_id,competency_id) VALUES (?,?)').bind(gid,p.competencyId))
