@@ -255,6 +255,81 @@ api.delete('/periods/:id', async (c) => {
   return c.json({ ok: true })
 })
 
+/* ---------------- staff organisational directory ---------------- */
+// Existing staff.team and staff.role are retained as storage for Division and
+// Department respectively, preserving all existing staff/HCOT foreign keys.
+const staffDirectoryKinds = {
+  divisions: { table: 'staff_divisions', column: 'team' },
+  departments: { table: 'staff_departments', column: 'role' },
+} as const
+
+type DirectoryKind = keyof typeof staffDirectoryKinds
+function directoryKind(kind: string) {
+  return Object.prototype.hasOwnProperty.call(staffDirectoryKinds, kind)
+    ? staffDirectoryKinds[kind as DirectoryKind] : null
+}
+
+api.get('/staff-directory/:kind', async (c) => {
+  const cfg = directoryKind(c.req.param('kind'))
+  if (!cfg) return c.json({ error: 'Unknown directory type.' }, 404)
+  const rows = await c.env.DB.prepare(
+    `SELECT name FROM ${cfg.table} UNION SELECT DISTINCT TRIM(${cfg.column}) AS name FROM staff WHERE ${cfg.column} IS NOT NULL AND TRIM(${cfg.column}) <> '' ORDER BY name COLLATE NOCASE`
+  ).all<{ name: string }>()
+  return c.json({ options: (rows.results ?? []).map(r => r.name) })
+})
+
+api.post('/staff-directory/:kind', async (c) => {
+  const cfg = directoryKind(c.req.param('kind'))
+  if (!cfg) return c.json({ error: 'Unknown directory type.' }, 404)
+  const body = await c.req.json<{ name?: string }>()
+  const name = String(body.name ?? '').trim()
+  if (!name || name.length > 120) return c.json({ error: 'Enter a name of 1–120 characters.' }, 400)
+  const existing = await c.env.DB.prepare(`SELECT 1 AS found FROM ${cfg.table} WHERE name = ? COLLATE NOCASE UNION SELECT 1 AS found FROM staff WHERE ${cfg.column} = ? COLLATE NOCASE LIMIT 1`).bind(name,name).first()
+  if (existing) return c.json({ error: 'This name already exists.' }, 409)
+  await c.env.DB.prepare(`INSERT INTO ${cfg.table} (name) VALUES (?)`).bind(name).run()
+  return c.json({ ok: true }, 201)
+})
+
+api.patch('/staff-directory/:kind', async (c) => {
+  const cfg = directoryKind(c.req.param('kind'))
+  if (!cfg) return c.json({ error: 'Unknown directory type.' }, 404)
+  const body = await c.req.json<{ old_name?: string; name?: string }>()
+  const oldName = String(body.old_name ?? '').trim(), name = String(body.name ?? '').trim()
+  if (!oldName || !name || name.length > 120) return c.json({ error: 'Valid old and new names are required.' }, 400)
+  const existing = await c.env.DB.prepare(`SELECT 1 AS found FROM ${cfg.table} WHERE name = ? COLLATE NOCASE UNION SELECT 1 AS found FROM staff WHERE ${cfg.column} = ? COLLATE NOCASE LIMIT 1`).bind(oldName,oldName).first()
+  if (!existing) return c.json({ error: 'Directory entry not found.' }, 404)
+  if (oldName.toLowerCase() !== name.toLowerCase()) {
+    const conflict = await c.env.DB.prepare(`SELECT 1 AS found FROM ${cfg.table} WHERE name = ? COLLATE NOCASE UNION SELECT 1 AS found FROM staff WHERE ${cfg.column} = ? COLLATE NOCASE LIMIT 1`).bind(name,name).first()
+    if (conflict) return c.json({ error: 'The new name already exists.' }, 409)
+  }
+  await c.env.DB.prepare(`UPDATE staff SET ${cfg.column} = ? WHERE ${cfg.column} = ? COLLATE NOCASE`).bind(name,oldName).run()
+  await c.env.DB.prepare(`DELETE FROM ${cfg.table} WHERE name = ? COLLATE NOCASE`).bind(oldName).run()
+  await c.env.DB.prepare(`INSERT OR IGNORE INTO ${cfg.table} (name) VALUES (?)`).bind(name).run()
+  return c.json({ ok: true })
+})
+
+api.delete('/staff-directory/:kind', async (c) => {
+  const cfg = directoryKind(c.req.param('kind'))
+  if (!cfg) return c.json({ error: 'Unknown directory type.' }, 404)
+  const name = String(c.req.query('name') ?? '').trim()
+  if (!name) return c.json({ error: 'Directory entry name is required.' }, 400)
+  const inUse = await c.env.DB.prepare(`SELECT 1 AS found FROM staff WHERE ${cfg.column} = ? COLLATE NOCASE LIMIT 1`).bind(name).first()
+  if (inUse) return c.json({ error: 'This entry is assigned to staff. Reassign them before deleting it.' }, 409)
+  const result = await c.env.DB.prepare(`DELETE FROM ${cfg.table} WHERE name = ? COLLATE NOCASE`).bind(name).run()
+  if (!result.meta.changes) return c.json({ error: 'Directory entry not found.' }, 404)
+  return c.json({ ok: true })
+})
+
+async function validateStaffDirectory(db: D1Database, division: string | null, department: string | null) {
+  for (const [kind, name] of [['divisions', division], ['departments', department]] as const) {
+    if (!name) continue
+    const cfg = staffDirectoryKinds[kind]
+    const found = await db.prepare(`SELECT 1 AS found FROM ${cfg.table} WHERE name = ? COLLATE NOCASE UNION SELECT 1 AS found FROM staff WHERE ${cfg.column} = ? COLLATE NOCASE LIMIT 1`).bind(name,name).first()
+    if (!found) return `Select a valid ${kind === 'divisions' ? 'division' : 'department'} from the directory.`
+  }
+  return null
+}
+
 /* ---------------- staff roster ---------------- */
 api.get('/staff', async (c) => {
   const rows = await c.env.DB.prepare(
@@ -270,6 +345,8 @@ api.post('/staff', async (c) => {
   if (!email) return c.json({ error: 'A valid email address is required.' }, 400)
   const dupe = await c.env.DB.prepare('SELECT id FROM staff WHERE email = ?').bind(email).first()
   if (dupe) return c.json({ error: `${email} is already on the roster.` }, 409)
+  const directoryError = await validateStaffDirectory(c.env.DB, b.team?.trim() || null, b.role?.trim() || null)
+  if (directoryError) return c.json({ error: directoryError }, 400)
   await c.env.DB.prepare(
     'INSERT INTO staff (full_name, email, team, role, active) VALUES (?, ?, ?, ?, 1)'
   )
@@ -283,6 +360,8 @@ api.patch('/staff/:id', async (c) => {
   const b = await c.req.json<Partial<Staff>>()
   const cur = await c.env.DB.prepare('SELECT * FROM staff WHERE id = ?').bind(id).first<Staff>()
   if (!cur) return c.json({ error: 'Staff member not found.' }, 404)
+  const directoryError = await validateStaffDirectory(c.env.DB, b.team === undefined ? cur.team : b.team?.trim() || null, b.role === undefined ? cur.role : b.role?.trim() || null)
+  if (directoryError) return c.json({ error: directoryError }, 400)
   await c.env.DB.prepare(
     'UPDATE staff SET full_name = ?, email = ?, team = ?, role = ?, active = ? WHERE id = ?'
   )
@@ -314,8 +393,8 @@ api.post('/staff/import', async (c) => {
   const find = (...names: string[]) => lower.findIndex((h) => names.some((n) => h.includes(n)))
   const cName = find('full name', 'staff name', 'employee name', 'name')
   const cEmail = find('email', 'e-mail')
-  const cTeam = find('team', 'department', 'unit', 'faculty', 'school')
-  const cRole = find('role', 'position', 'job title', 'title')
+  const cTeam = find('division', 'team')
+  const cRole = find('department', 'role')
   if (cName < 0 || cEmail < 0) {
     return c.json({ error: 'The file needs at least a name column and an email column.' }, 400)
   }
