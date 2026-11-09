@@ -43,3 +43,17 @@ test('competency group hierarchy and assessment group-first workflow',()=>{
  assert.match(ui,/hca-group-items/);
  assert.match(ui,/hcg-link-cadre/);
 });
+
+test('cadre group mapping supports optional organisational scopes without losing global links',()=>{
+ assert.match(db,/CREATE TABLE IF NOT EXISTS hcot_cadre_group_scopes/)
+ assert.match(db,/idx_hcot_cadre_group_scope/)
+ assert.match(api,/validateStaffDirectory\(c.env.DB,division,department,unit\)/)
+ assert.match(api,/INSERT OR IGNORE INTO hcot_cadre_group_scopes/)
+ assert.match(api,/FROM hcot_cadre_groups UNION ALL SELECT cadre_id,group_id,division,department,unit FROM hcot_cadre_group_scopes/)
+ assert.match(ui,/hcg-scope-div/)
+ assert.match(ui,/hcg-scope-dept/)
+ assert.match(ui,/hcg-scope-unit/)
+ assert.match(ui,/same\(x.division,data.staff.team\)/)
+ assert.match(ui,/same\(x.department,data.staff.role\)/)
+ assert.match(ui,/same\(x.unit,data.staff.unit\)/)
+})
