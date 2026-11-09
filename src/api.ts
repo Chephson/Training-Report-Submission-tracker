@@ -869,6 +869,47 @@ api.post('/hcot/plans/:id/participants', async c => {
 })
 
 /* HCOT catalogue and planning records. No private HCOT archive data is seeded. */
+api.get('/hcot/competency-groups', async c => {
+  const [groups,links,cadreLinks]=await Promise.all([
+    c.env.DB.prepare('SELECT * FROM hcot_competency_groups ORDER BY name COLLATE NOCASE').all(),
+    c.env.DB.prepare('SELECT group_id,competency_id FROM hcot_group_competencies').all(),
+    c.env.DB.prepare('SELECT cadre_id,group_id FROM hcot_cadre_groups').all()
+  ])
+  return c.json({groups:groups.results||[],competencies:links.results||[],cadres:cadreLinks.results||[]})
+})
+api.post('/hcot/competency-groups', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const b=await c.req.json<{name?:string;description?:string}>().catch(()=>({}))
+  const name=String(b.name||'').trim(),description=String(b.description||'').trim()
+  if(!name||name.length>150||description.length>1000)return c.json({error:'Enter a valid group name (up to 150 characters).'},400)
+  try {const x=await c.env.DB.prepare('INSERT INTO hcot_competency_groups(name,description) VALUES (?,?)').bind(name,description||null).run();return c.json({ok:true,id:x.meta.last_row_id},201)}
+  catch{return c.json({error:'Competency group already exists or could not be saved.'},409)}
+})
+api.post('/hcot/competency-groups/assign-competency', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const b=await c.req.json<{group_id?:number;competency_id?:number}>().catch(()=>({}))
+  const gid=Number(b.group_id),cid=Number(b.competency_id)
+  if(!Number.isSafeInteger(gid)||gid<=0||!Number.isSafeInteger(cid)||cid<=0)return c.json({error:'Select a group and competency.'},400)
+  const group=await c.env.DB.prepare('SELECT id FROM hcot_competency_groups WHERE id=?').bind(gid).first()
+  const comp=await c.env.DB.prepare('SELECT id FROM hcot_competencies WHERE id=?').bind(cid).first()
+  if(!group||!comp)return c.json({error:'Group or competency not found.'},404)
+  await c.env.DB.prepare('INSERT INTO hcot_group_competencies(group_id,competency_id) VALUES (?,?) ON CONFLICT(competency_id) DO UPDATE SET group_id=excluded.group_id').bind(gid,cid).run()
+  return c.json({ok:true})
+})
+api.post('/hcot/competency-groups/assign-cadre', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const b=await c.req.json<{group_id?:number;cadre_id?:number}>().catch(()=>({}))
+  const gid=Number(b.group_id),cid=Number(b.cadre_id)
+  if(!Number.isSafeInteger(gid)||gid<=0||!Number.isSafeInteger(cid)||cid<=0)return c.json({error:'Select a group and cadre.'},400)
+  const group=await c.env.DB.prepare('SELECT id FROM hcot_competency_groups WHERE id=?').bind(gid).first()
+  const cadre=await c.env.DB.prepare('SELECT id FROM hcot_cadres WHERE id=? AND active=1').bind(cid).first()
+  if(!group||!cadre)return c.json({error:'Group or active cadre not found.'},404)
+  await c.env.DB.prepare('INSERT OR IGNORE INTO hcot_cadre_groups(cadre_id,group_id) VALUES (?,?)').bind(cid,gid).run()
+  return c.json({ok:true})
+})
 api.get('/hcot/competencies', async c => {
   const rows=await c.env.DB.prepare('SELECT * FROM hcot_competencies ORDER BY name COLLATE NOCASE').all()
   return c.json({competencies:rows.results||[]})
@@ -1063,9 +1104,11 @@ api.get('/hcot/competency-assessments', async c => {
       FROM hcot_staff_competencies d JOIN staff s ON s.id=d.staff_id
       WHERE d.staff_id=? AND s.active=1
     ), combined AS (SELECT * FROM inherited UNION ALL SELECT * FROM direct)
-    SELECT p.id,p.name,p.category,MAX(z.inherited) AS inherited,MAX(z.direct) AS direct
+    SELECT p.id,p.name,p.category,MAX(z.inherited) AS inherited,MAX(z.direct) AS direct,gg.group_id,g.name AS group_name
     FROM combined z JOIN hcot_competencies p ON p.id=z.competency_id
-    GROUP BY p.id,p.name,p.category ORDER BY p.name COLLATE NOCASE`).bind(staffId,staffId).all()
+    LEFT JOIN hcot_group_competencies gg ON gg.competency_id=p.id
+    LEFT JOIN hcot_competency_groups g ON g.id=gg.group_id
+    GROUP BY p.id,p.name,p.category,gg.group_id,g.name ORDER BY p.name COLLATE NOCASE`).bind(staffId,staffId).all()
   const history=await c.env.DB.prepare(`SELECT a.*,p.name AS competency_name,p.category FROM hcot_competency_assessments a
     JOIN hcot_competencies p ON p.id=a.competency_id WHERE a.staff_id=?
     ORDER BY a.assessed_at DESC,a.id DESC LIMIT 500`).bind(staffId).all()
