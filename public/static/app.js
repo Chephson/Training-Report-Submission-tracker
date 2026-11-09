@@ -923,7 +923,7 @@ async function renderHCOTSection(section) {
             $('#hca-group-items').style.display=selected?'block':'none'
             $$('.hca-competency').forEach(card=>{card.style.display=card.dataset.group===selected?'block':'none'})
           }
-          $('.hca-save').forEach(btn=>btn.onclick=async()=>{
+          $$('.hca-save').forEach(btn=>btn.onclick=async()=>{
             const competencyId=Number(btn.dataset.id),input=$('.hca-score[data-id="'+competencyId+'"]'),notes=$('.hca-notes[data-id="'+competencyId+'"]')
             const score=Number(input.value),target=Number($('#hca-target').value),cycle=$('#hca-cycle').value.trim()
             if(!input.value||!Number.isInteger(score)||score<0||score>100||!Number.isInteger(target)||target<0||target>100||!cycle){toast('Enter an assessment cycle and valid whole-number score and target (0–100).',true);return}
