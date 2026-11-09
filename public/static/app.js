@@ -1245,9 +1245,19 @@ async function renderRoster(el) {
 
   $('#topbar-actions').innerHTML = `
     <button class="btn" id="r-directory">Manage divisions, departments & units</button>
+    <button class="btn" id="r-template">Download bulk-load template</button>
      <button class="btn" id="r-import">${ico('upload', 15)} Import list</button>
     <button class="btn btn-primary" id="r-add">${ico('plus', 15)} Add staff member</button>`
 
+  $('#r-template').addEventListener('click', () => {
+    const csv='\\uFEFFfull_name,email,division,department,unit\\r\\n'
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8'})
+    const url=URL.createObjectURL(blob)
+    const link=document.createElement('a')
+    link.href=url;link.download='hcot-staff-roster-bulk-template.csv'
+    document.body.appendChild(link);link.click();link.remove()
+    URL.revokeObjectURL(url)
+  })
   $('#r-add').addEventListener('click', () => staffModal())
   $('#r-import').addEventListener('click', () => rosterImportModal())
   $('#r-directory').addEventListener('click', () => staffDirectoryModal())
@@ -1416,7 +1426,7 @@ function rosterImportModal() {
   const m = modal({
     title: 'Import staff list',
     body: `
-      <p class="tiny muted mb-12">Paste a CSV, or upload a file. It needs a <strong>name</strong> column and an <strong>email</strong> column; <em>division</em> and <em>department</em> columns are optional.</p>
+      <p class="tiny muted mb-12">Paste a CSV, or upload a file. It needs <strong>full_name</strong> and <strong>email</strong> columns; <em>division</em>, <em>department</em> and <em>unit</em> are optional. Division/department/unit values must already exist in the staff directory.</p>
       <div class="row mb-12" style="gap:8px">
         <button class="btn btn-sm" id="pick-file">Choose file…</button>
         <span class="tiny muted" id="file-label">No file chosen</span>
