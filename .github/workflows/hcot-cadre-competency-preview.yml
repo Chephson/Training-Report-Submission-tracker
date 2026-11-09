@@ -34,7 +34,7 @@ jobs:
       - name: Checkout approved HCOT feature commit (never main)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: 8a0af525a4d7ea345bd4f10d4220a44791a38b20
+          ref: f83a83f1647d9a19b49fe27ce2f65403d7058cca
           persist-credentials: false
 
       - name: Verify approved source and Cloudflare production branch
@@ -44,7 +44,7 @@ jobs:
           API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "8a0af525a4d7ea345bd4f10d4220a44791a38b20"
+          test "$(git rev-parse HEAD)" = "f83a83f1647d9a19b49fe27ce2f65403d7058cca"
           curl --fail --silent --show-error \
             -H "Authorization: Bearer $API_TOKEN" \
             "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/pages/projects/$PROJECT_NAME" > /tmp/hcot-pages-project.json
