@@ -873,7 +873,7 @@ api.get('/hcot/competency-groups', async c => {
   const [groups,links,cadreLinks]=await Promise.all([
     c.env.DB.prepare('SELECT * FROM hcot_competency_groups ORDER BY name COLLATE NOCASE').all(),
     c.env.DB.prepare('SELECT group_id,competency_id FROM hcot_group_competencies').all(),
-    c.env.DB.prepare('SELECT cadre_id,group_id FROM hcot_cadre_groups').all()
+    c.env.DB.prepare(`SELECT cadre_id,group_id,NULL AS division,NULL AS department,NULL AS unit FROM hcot_cadre_groups UNION ALL SELECT cadre_id,group_id,division,department,unit FROM hcot_cadre_group_scopes`).all()
   ])
   return c.json({groups:groups.results||[],competencies:links.results||[],cadres:cadreLinks.results||[]})
 })
@@ -901,13 +901,20 @@ api.post('/hcot/competency-groups/assign-competency', async c => {
 api.post('/hcot/competency-groups/assign-cadre', async c => {
   const session=await verifyAccessJwt(c.req.raw,c.env)
   if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
-  const b=await c.req.json<{group_id?:number;cadre_id?:number}>().catch(()=>({}))
+  const b=await c.req.json<{group_id?:number;cadre_id?:number;division?:string;department?:string;unit?:string}>().catch(()=>({}))
   const gid=Number(b.group_id),cid=Number(b.cadre_id)
   if(!Number.isSafeInteger(gid)||gid<=0||!Number.isSafeInteger(cid)||cid<=0)return c.json({error:'Select a group and cadre.'},400)
   const group=await c.env.DB.prepare('SELECT id FROM hcot_competency_groups WHERE id=?').bind(gid).first()
   const cadre=await c.env.DB.prepare('SELECT id FROM hcot_cadres WHERE id=? AND active=1').bind(cid).first()
   if(!group||!cadre)return c.json({error:'Group or active cadre not found.'},404)
-  await c.env.DB.prepare('INSERT OR IGNORE INTO hcot_cadre_groups(cadre_id,group_id) VALUES (?,?)').bind(cid,gid).run()
+  const division=String(b.division||'').trim()||null,department=String(b.department||'').trim()||null,unit=String(b.unit||'').trim()||null
+  const err=await validateStaffDirectory(c.env.DB,division,department,unit)
+  if(err)return c.json({error:err},400)
+  if(!division&&!department&&!unit){
+    await c.env.DB.prepare('INSERT OR IGNORE INTO hcot_cadre_groups(cadre_id,group_id) VALUES (?,?)').bind(cid,gid).run()
+  }else{
+    await c.env.DB.prepare('INSERT OR IGNORE INTO hcot_cadre_group_scopes(cadre_id,group_id,division,department,unit) VALUES (?,?,?,?,?)').bind(cid,gid,division,department,unit).run()
+  }
   return c.json({ok:true})
 })
 api.get('/hcot/competencies', async c => {
