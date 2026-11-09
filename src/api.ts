@@ -949,6 +949,8 @@ api.post('/hcot/competency-groups/import', async c => {
     else writes.push(c.env.DB.prepare('INSERT OR IGNORE INTO hcot_cadre_group_scopes(cadre_id,group_id,division,department,unit) VALUES (?,?,?,?,?)').bind(p.cadreId,gid,p.division,p.department,p.unit))
   }
   await c.env.DB.batch(writes)
+  // Record the responsible administrator and import summary in the existing activity ledger.
+  await log(c.env.DB,'hcot_competency_groups_import',JSON.stringify({rows:prepared.length,groups:ids.size,competencies:ownership.size,scope_mappings:prepared.filter(p=>p.division||p.department||p.unit).length,global_mappings:prepared.filter(p=>!p.division&&!p.department&&!p.unit).length}),session.email)
   return c.json({ok:true,rows:prepared.length,groups:ids.size,competencies:ownership.size})
 })
 api.post('/hcot/competency-groups/assign-competency', async c => {
