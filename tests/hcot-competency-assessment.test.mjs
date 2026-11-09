@@ -24,3 +24,11 @@ test('staff roster offers downloadable CSV bulk import template',()=>{
   assert.match(ui,/full_name,email,division,department,unit/);
   assert.match(ui,/URL\.createObjectURL\(blob\)/);
 });
+
+test('roster bulk template includes cadre and import resolves existing active cadre names',()=>{
+ assert.match(ui,/full_name,email,division,department,unit,cadre/);
+ assert.match(api,/const cCadre = find\('cadre'\)/);
+ assert.match(api,/SELECT id FROM hcot_cadres WHERE LOWER\(TRIM\(name\)\)=LOWER\(TRIM\(\?\)\) AND active=1/);
+ assert.match(api,/INSERT INTO staff \(full_name, email, team, role, unit, cadre_id, active\)/);
+ assert.match(api,/cadre_id = CASE WHEN \? = 1 THEN excluded.cadre_id ELSE staff.cadre_id END/);
+});
