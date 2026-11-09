@@ -434,12 +434,22 @@ api.post('/staff/import', async (c) => {
       skipped++
       continue
     }
+    const division = cTeam >= 0 ? (r[cTeam] || '').trim() : ''
+    const department = cRole >= 0 ? (r[cRole] || '').trim() : ''
+    // CSV import must not bypass the division/department relationship.
+    // Existing legacy rows are still readable; imported values require a valid pair.
+    const directoryError = await validateStaffDirectory(c.env.DB, division || null, department || null)
+    if (directoryError) {
+      problems.push(`Row ${i + 2}: ${directoryError}`)
+      skipped++
+      continue
+    }
     const res = await c.env.DB.prepare(
       `INSERT INTO staff (full_name, email, team, role, active) VALUES (?, ?, ?, ?, 1)
        ON CONFLICT(email) DO UPDATE SET full_name = excluded.full_name,
          team = COALESCE(excluded.team, staff.team), role = COALESCE(excluded.role, staff.role)`
     )
-      .bind(name, email, cTeam >= 0 ? r[cTeam] || null : null, cRole >= 0 ? r[cRole] || null : null)
+      .bind(name, email, division || null, department || null)
       .run()
     if (res.meta.changes) added++
   }
