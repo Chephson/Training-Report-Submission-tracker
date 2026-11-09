@@ -1030,6 +1030,47 @@ api.post('/hcot/cadre-competencies/bulk', async c => {
   return c.json({ok:true,created_or_reused:planned.length})
 })
 
+// Assessment eligibility is derived live from cadre mappings, not copied to staff records.
+api.get('/hcot/competency-assessments', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const staffId=Number(c.req.query('staff_id'))
+  if(!Number.isSafeInteger(staffId)||staffId<=0)return c.json({error:'Select a staff member.'},400)
+  const staff=await c.env.DB.prepare('SELECT id,full_name,email,team,role,unit,cadre_id FROM staff WHERE id=?').bind(staffId).first()
+  if(!staff)return c.json({error:'Staff member not found.'},404)
+  const eligible=await c.env.DB.prepare(`SELECT DISTINCT p.id,p.name,p.category,m.cadre_id
+    FROM staff s JOIN hcot_cadre_competencies m ON m.cadre_id=s.cadre_id
+    JOIN hcot_competencies p ON p.id=m.competency_id
+    WHERE s.id=? AND s.active=1
+    AND (m.division IS NULL OR LOWER(TRIM(m.division))=LOWER(TRIM(COALESCE(s.team,''))))
+    AND (m.department IS NULL OR LOWER(TRIM(m.department))=LOWER(TRIM(COALESCE(s.role,''))))
+    AND (m.unit IS NULL OR LOWER(TRIM(m.unit))=LOWER(TRIM(COALESCE(s.unit,''))))
+    ORDER BY p.name COLLATE NOCASE`).bind(staffId).all()
+  const history=await c.env.DB.prepare(`SELECT a.*,p.name AS competency_name,p.category FROM hcot_competency_assessments a
+    JOIN hcot_competencies p ON p.id=a.competency_id WHERE a.staff_id=?
+    ORDER BY a.assessed_at DESC,a.id DESC LIMIT 500`).bind(staffId).all()
+  return c.json({staff,competencies:eligible.results||[],assessments:history.results||[]})
+})
+api.post('/hcot/competency-assessments', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const b=await c.req.json<{staff_id?:number;competency_id?:number;cycle?:string;score?:number;target_score?:number;notes?:string}>().catch(()=>({}))
+  const staffId=Number(b.staff_id),competencyId=Number(b.competency_id),score=Number(b.score),target=b.target_score===undefined?70:Number(b.target_score)
+  const cycle=String(b.cycle||'').trim(),notes=String(b.notes||'').trim()
+  if(!Number.isSafeInteger(staffId)||staffId<=0||!Number.isSafeInteger(competencyId)||competencyId<=0)return c.json({error:'Select staff and competency.'},400)
+  if(!Number.isInteger(score)||score<0||score>100||!Number.isInteger(target)||target<0||target>100)return c.json({error:'Scores and targets must be whole numbers from 0 to 100.'},400)
+  if(!cycle||cycle.length>80||notes.length>2000)return c.json({error:'Invalid assessment cycle or notes.'},400)
+  const eligible=await c.env.DB.prepare(`SELECT 1 AS eligible FROM staff s JOIN hcot_cadre_competencies m ON m.cadre_id=s.cadre_id
+    WHERE s.id=? AND s.active=1 AND m.competency_id=?
+    AND (m.division IS NULL OR LOWER(TRIM(m.division))=LOWER(TRIM(COALESCE(s.team,''))))
+    AND (m.department IS NULL OR LOWER(TRIM(m.department))=LOWER(TRIM(COALESCE(s.role,''))))
+    AND (m.unit IS NULL OR LOWER(TRIM(m.unit))=LOWER(TRIM(COALESCE(s.unit,'')))) LIMIT 1`).bind(staffId,competencyId).first()
+  if(!eligible)return c.json({error:'Competency is not currently inherited by this staff member through their cadre.'},409)
+  const result=await c.env.DB.prepare(`INSERT INTO hcot_competency_assessments(staff_id,competency_id,cycle,score,target_score,assessor_email,notes)
+    VALUES(?,?,?,?,?,?,?)`).bind(staffId,competencyId,cycle,score,target,session.email,notes||null).run()
+  return c.json({ok:true,id:result.meta.last_row_id},201)
+})
+
 api.get('/hcot/effective-competencies', async c => {
   const rows=await c.env.DB.prepare(`WITH inherited AS (
       SELECT s.id AS staff_id,m.competency_id,1 AS inherited,0 AS direct
