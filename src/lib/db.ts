@@ -109,6 +109,18 @@ const SCHEMA = [
     PRIMARY KEY(cadre_id,group_id),
     FOREIGN KEY(cadre_id) REFERENCES hcot_cadres(id),
     FOREIGN KEY(group_id) REFERENCES hcot_competency_groups(id))`,
+  `CREATE TABLE IF NOT EXISTS hcot_cadre_group_scopes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cadre_id INTEGER NOT NULL,
+    group_id INTEGER NOT NULL,
+    division TEXT,
+    department TEXT,
+    unit TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(cadre_id) REFERENCES hcot_cadres(id),
+    FOREIGN KEY(group_id) REFERENCES hcot_competency_groups(id))`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_hcot_cadre_group_scope
+    ON hcot_cadre_group_scopes(cadre_id,group_id,COALESCE(division,''),COALESCE(department,''),COALESCE(unit,''))`,
   `CREATE TABLE IF NOT EXISTS hcot_competency_assessments (
      id INTEGER PRIMARY KEY AUTOINCREMENT,
      staff_id INTEGER NOT NULL,
