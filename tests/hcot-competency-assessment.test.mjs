@@ -12,3 +12,8 @@ test('assessment eligibility includes direct and inherited mappings without dupl
   assert.match(section,/MAX\(z.inherited\) AS inherited,MAX\(z.direct\) AS direct/);
   assert.match(section,/EXISTS\(SELECT 1 FROM hcot_staff_competencies d/);
 });
+
+test('cadre selectors show names rather than numeric database IDs',()=>{
+  assert.match(ui,/for\(const id of \['hcot-cadre-assign','hcot-rule-cadre'\]\)/);
+  assert.match(ui,/o\.textContent=cadre\.name/);
+});
