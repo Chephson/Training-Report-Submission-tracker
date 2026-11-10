@@ -900,8 +900,8 @@ async function renderHCOTSection(section) {
         (data.plans||[]).map(x=>'<tr><td>'+esc(x.title)+'</td><td>'+esc(x.start_date||'—')+' – '+esc(x.end_date||'—')+'</td><td>'+esc(x.location||'—')+'</td><td>'+x.participants+'</td></tr>').join('')+
         (data.plans.length?'':'<tr><td colspan="4">No training plans scheduled for this year.</td></tr>')+'</tbody></table></div></div>'
     }else if(section==='assessments'){
-      const roster=await api('/staff')
-      const staff=(roster.staff||[]).filter(x=>x.active===1)
+      const roster=await api('/hcot/line-manager/my-staff')
+      const staff=roster.staff||[]
       el.innerHTML='<div class="card"><div class="card-head"><h3>Individual competency assessment</h3></div><div class="card-body"><p class="tiny muted">All distinct competencies mapped to the selected staff member (cadre-inherited and direct) are assessed separately on a 0–100 scale.</p><label class="field"><span>Staff member</span><select id="hca-staff"><option value="">Select staff</option>'+staff.map(x=>'<option value="'+x.id+'">'+esc(x.full_name)+' — '+esc(x.email)+'</option>').join('')+'</select></label><label class="field"><span>Assessment cycle</span><input id="hca-cycle" maxlength="80" placeholder="e.g. 2026 Annual"></label><label class="field"><span>Target score (0–100)</span><input id="hca-target" type="number" min="0" max="100" step="1" value="70"></label><div id="hca-detail"></div></div></div>'
       $('#hca-staff').onchange=async()=>{
         const detail=$('#hca-detail'),id=Number($('#hca-staff').value)
@@ -909,7 +909,7 @@ async function renderHCOTSection(section) {
         try{
           const data=await api('/hcot/competency-assessments?staff_id='+id)
           const comps=data.competencies||[],history=data.assessments||[]
-          const groupData=await api('/hcot/competency-groups')
+          const groupData={cadres:[]}
           const same=(a,b)=>!a||String(a).trim().toLowerCase()===String(b||'').trim().toLowerCase()
           const cadreGroups=new Set((groupData.cadres||[]).filter(x=>Number(x.cadre_id)===Number(data.staff.cadre_id)&&same(x.division,data.staff.team)&&same(x.department,data.staff.role)&&same(x.unit,data.staff.unit)).map(x=>x.group_id))
           const visibleGroups=[...new Map(comps.map(x=>[x.group_id&&cadreGroups.has(x.group_id)?String(x.group_id):'other',{id:x.group_id&&cadreGroups.has(x.group_id)?String(x.group_id):'other',name:x.group_id&&cadreGroups.has(x.group_id)?x.group_name:'Other mapped competencies'}])).values()]
