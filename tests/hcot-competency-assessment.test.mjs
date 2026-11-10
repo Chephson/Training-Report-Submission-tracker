@@ -182,3 +182,14 @@ test('HCOT admins may assess only their roster-linked staff without changing CSV
  assert.match(ui,/data-section="assessments">My Staff Assessments/);
  assert.match(api,/Staff member is not assigned to this line manager/);
 });
+
+test('staff competency group lookup uses roster search and cadre scope without changing mappings',()=>{
+ assert.match(ui,/id="hcg-staff-search"/);
+ assert.match(ui,/id="hcg-staff-select"/);
+ assert.match(ui,/id="hcg-staff-groups"/);
+ assert.match(ui,/groupData\.cadres/);
+ assert.match(ui,/sameScope\(x\.division,person\.division\)/);
+ assert.match(ui,/sameScope\(x\.department,person\.department\)/);
+ assert.match(ui,/sameScope\(x\.unit,person\.unit\)/);
+ assert.match(ui,/const staffGroupLookup=isAdmin\?/);
+});
