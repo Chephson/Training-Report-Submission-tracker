@@ -34,7 +34,7 @@ import { previewHandshake } from './lib/hcot-handshake'
 import { verifyAccessJwt } from './lib/hcot-access'
 import { isHcotViewerRead } from './lib/hcot-roles'
 
-export type Env = { DB: D1Database; HCOT_ACCESS_TEAM_DOMAIN?: string; HCOT_ACCESS_AUD?: string; HCOT_SETTINGS_ADMIN_EMAILS?: string }
+export type Env = { DB: D1Database; HCOT_ACCESS_TEAM_DOMAIN?: string; HCOT_ACCESS_AUD?: string; HCOT_SETTINGS_ADMIN_EMAILS?: string; HCOT_RESEND_API_KEY?: string; HCOT_EMAIL_FROM?: string }
 const api = new Hono<{ Bindings: Env }>()
 
 api.use('/*', cors({ origin: (origin, c) => { try { return new URL(origin).origin === new URL(c.req.url).origin ? origin : '' } catch { return '' } }, allowHeaders: ['Content-Type', 'X-Access-Code'] }))
@@ -1326,30 +1326,68 @@ api.get('/hcot/evaluations/competency-report', async c=>{
   ])
   return c.json({assessments:assessments.results||[],managers:managers.results||[],requests:requests.results||[]})
 })
+api.get('/hcot/evaluations/manager-staff', async c=>{
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const rows=await c.env.DB.prepare(`SELECT a.manager_email,s.id AS staff_id,s.full_name,s.email AS staff_email
+    FROM hcot_line_manager_assignments a JOIN staff s ON s.id=a.staff_id
+    WHERE s.active=1 ORDER BY a.manager_email,s.full_name COLLATE NOCASE`).all()
+  return c.json({assignments:rows.results||[]})
+})
 api.post('/hcot/evaluations/assessment-requests', async c=>{
   const session=await verifyAccessJwt(c.req.raw,c.env)
   if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
-  const body=await c.req.json<{manager_emails?:string[];cycle?:string}>().catch(()=>({}))
+  const body=await c.req.json<{manager_emails?:string[];cycle?:string;staff_ids?:number[]}>().catch(()=>({}))
   const cycle=String(body.cycle||'').trim()
   const emails=[...new Set((Array.isArray(body.manager_emails)?body.manager_emails:[]).map(x=>String(x).trim().toLowerCase()))]
-  if(!cycle||cycle.length>80||!emails.length||emails.length>200)return c.json({error:'Provide an assessment cycle and 1–200 managers.'},400)
-  const allowed=await c.env.DB.prepare(`SELECT DISTINCT LOWER(TRIM(a.manager_email)) AS email FROM hcot_line_manager_assignments a
-    JOIN staff s ON s.id=a.staff_id WHERE s.active=1`).all<{email:string}>()
-  const eligible=new Set((allowed.results||[]).map(x=>x.email))
-  if(emails.some(email=>!eligible.has(email)))return c.json({error:'Every selected manager must have active assigned staff.'},400)
-  const existing=await c.env.DB.prepare('SELECT manager_email FROM hcot_assessment_requests WHERE cycle=? AND status=?').bind(cycle,'pending').all<{manager_email:string}>()
-  const pending=new Set((existing.results||[]).map(x=>x.manager_email))
-  const toCreate=emails.filter(email=>!pending.has(email))
-  if(toCreate.length)await c.env.DB.batch(toCreate.map(email=>c.env.DB.prepare(
-    'INSERT INTO hcot_assessment_requests(manager_email,cycle,requested_by) VALUES(?,?,?)'
-  ).bind(email,cycle,session.email)))
-  await log(c.env.DB,'hcot.assessment.requested',JSON.stringify({cycle,managers:toCreate}),session.email)
-  return c.json({ok:true,created:toCreate.length,already_pending:emails.length-toCreate.length})
+  const ids=[...new Set((Array.isArray(body.staff_ids)?body.staff_ids:[]).map(Number))]
+  if(!cycle||cycle.length>80||!emails.length||emails.length>200||ids.length>1000||ids.some(id=>!Number.isSafeInteger(id)||id<1))
+    return c.json({error:'Provide a cycle, 1–200 managers and valid staff selections.'},400)
+  const rows=await c.env.DB.prepare(`SELECT a.manager_email,s.id AS staff_id,s.full_name
+    FROM hcot_line_manager_assignments a JOIN staff s ON s.id=a.staff_id WHERE s.active=1`).all<{manager_email:string;staff_id:number;full_name:string}>()
+  const assignments=rows.results||[]
+  const byManager=new Map<string,typeof assignments>()
+  for(const row of assignments){const key=row.manager_email.trim().toLowerCase();byManager.set(key,[...(byManager.get(key)||[]),row])}
+  if(emails.some(email=>!byManager.has(email)))return c.json({error:'Every selected manager must have active assigned staff.'},400)
+  const targets=ids.length?assignments.filter(x=>ids.includes(x.staff_id)):assignments.filter(x=>emails.includes(x.manager_email.trim().toLowerCase()))
+  if(ids.length&&targets.length!==ids.length)return c.json({error:'One or more selected staff are not active or mapped to a line manager.'},400)
+  if(ids.length&&targets.some(x=>!emails.includes(x.manager_email.trim().toLowerCase())))return c.json({error:'Selected staff must belong to the selected line managers.'},400)
+  const existing=await c.env.DB.prepare('SELECT id,manager_email FROM hcot_assessment_requests WHERE cycle=? AND status=?').bind(cycle,'pending').all<{id:number;manager_email:string}>()
+  const pending=new Map((existing.results||[]).map(x=>[x.manager_email.trim().toLowerCase(),x.id]))
+  const outcomes:{manager_email:string;request_id:number;email_status:string;staff_count:number}[]=[]
+  for(const email of emails){
+    const selected=targets.filter(x=>x.manager_email.trim().toLowerCase()===email)
+    if(!selected.length)continue
+    const prior=pending.get(email)
+    if(prior){outcomes.push({manager_email:email,request_id:prior,email_status:'already_pending',staff_count:selected.length});continue}
+    const created=await c.env.DB.prepare('INSERT INTO hcot_assessment_requests(manager_email,cycle,requested_by) VALUES(?,?,?)').bind(email,cycle,session.email).run()
+    const requestId=Number(created.meta.last_row_id)
+    await c.env.DB.batch(selected.map(x=>c.env.DB.prepare('INSERT INTO hcot_assessment_request_staff(request_id,staff_id) VALUES(?,?)').bind(requestId,x.staff_id)))
+    let status='not_configured',reference='',error=''
+    if(c.env.HCOT_RESEND_API_KEY&&c.env.HCOT_EMAIL_FROM){
+      try{
+        const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{
+          Authorization:'Bearer '+c.env.HCOT_RESEND_API_KEY,'Content-Type':'application/json',
+          'Idempotency-Key':'hcot-assessment-request-'+requestId
+        },body:JSON.stringify({from:c.env.HCOT_EMAIL_FROM,to:[email],
+          subject:'HCOT competency assessment request — '+cycle,
+          text:'An approved HCOT administrator has requested competency assessments for the following staff in your reporting line for '+cycle+':\\n\\n'+selected.map(x=>'- '+x.full_name).join('\\n')+'\\n\\nSign in to the HCOT Training Monitor and open My Staff Assessments to complete the assessments.'})})
+        const result=await response.json().catch(()=>({})) as {id?:string;message?:string}
+        if(response.ok){status='sent';reference=result.id||''}
+        else{status='failed';error='Email provider rejected the request (HTTP '+response.status+').'}
+      }catch{status='failed';error='Email provider connection failed.'}
+    }
+    await c.env.DB.prepare('INSERT INTO hcot_assessment_email_log(request_id,status,provider_reference,error_message) VALUES(?,?,?,?)').bind(requestId,status,reference,error).run()
+    outcomes.push({manager_email:email,request_id:requestId,email_status:status,staff_count:selected.length})
+  }
+  await log(c.env.DB,'hcot.assessment.requested',JSON.stringify({cycle,requests:outcomes.map(x=>({manager:x.manager_email,id:x.request_id,status:x.email_status}))}),session.email)
+  return c.json({ok:true,created:outcomes.filter(x=>x.email_status!=='already_pending').length,results:outcomes,
+    email_configured:!!(c.env.HCOT_RESEND_API_KEY&&c.env.HCOT_EMAIL_FROM)})
 })
 api.get('/hcot/line-manager/assessment-requests', async c=>{
   const manager=await requireAssessmentManager(c)
   if(manager.error)return c.json({error:manager.error},manager.status as 401|403)
-  const requests=await c.env.DB.prepare('SELECT id,cycle,requested_at,status FROM hcot_assessment_requests WHERE manager_email=? ORDER BY requested_at DESC,id DESC LIMIT 100').bind(manager.email).all()
+  const requests=await c.env.DB.prepare('SELECT r.id,r.cycle,r.requested_at,r.status, GROUP_CONCAT(s.full_name, ', ') AS staff_names FROM hcot_assessment_requests r LEFT JOIN hcot_assessment_request_staff t ON t.request_id=r.id LEFT JOIN staff s ON s.id=t.staff_id WHERE r.manager_email=? GROUP BY r.id ORDER BY requested_at DESC,id DESC LIMIT 100').bind(manager.email).all()
   return c.json({requests:requests.results||[]})
 })
 api.get('/hcot/competency-assessments', async c => {
