@@ -205,3 +205,17 @@ test('assignee assessment dropdown loads real cadre-linked groups and selects fi
  assert.match(ui,/visibleGroups.length\)\{\$\('#hca-group'\).value=visibleGroups\[0\].id/);
  assert.doesNotMatch(ui,/const groupData=\{cadres:\[\]\}/);
 });
+
+test('admin-only evaluations report and requests stay separate from manager-scoped assessments',()=>{
+ const report=api.slice(api.indexOf("api.get('/hcot/evaluations/competency-report'"),api.indexOf("api.get('/hcot/competency-assessments'"));
+ assert.match(report,/verifyAccessJwt\(c.req.raw,c.env\)/);
+ assert.match(report,/isHcotCompetencyAdmin\(c,session.email\)/);
+ assert.match(report,/hcot_competency_assessments/);
+ assert.match(report,/hcot_line_manager_assignments/);
+ assert.match(report,/hcot_assessment_requests/);
+ assert.match(report,/eligible.has\(email\)/);
+ assert.match(ui,/Competency assessment outcomes/);
+ assert.match(ui,/Request line manager assessments/);
+ assert.match(ui,/hcot\/line-manager\/assessment-requests/);
+ assert.match(ui,/No email is sent/);
+});
