@@ -913,7 +913,7 @@ async function renderHCOTSection(section) {
       const staff=roster.staff||[]
       const requestData=await api('/hcot/line-manager/assessment-requests')
       const pendingRequests=(requestData.requests||[]).filter(x=>x.status==='pending')
-      const requestNotice=pendingRequests.length?'<div class="card mb-12"><div class="card-body"><h4>Assessment requests from HCOT</h4>'+pendingRequests.map(x=>'<p>Cycle: <strong>'+esc(x.cycle)+'</strong> — Requested '+esc(x.requested_at)+'</p>').join('')+'</div></div>':''
+      const requestNotice=pendingRequests.length?'<div class="card mb-12"><div class="card-body"><h4>Assessment requests from HCOT</h4>'+pendingRequests.map(x=>'<p>Cycle: <strong>'+esc(x.cycle)+'</strong> — Staff: '+esc(x.staff_names||'All assigned staff')+' — Requested '+esc(x.requested_at)+'</p>').join('')+'</div></div>':''
       el.innerHTML=requestNotice+'<div class="card"><div class="card-head"><h3>Individual competency assessment</h3></div><div class="card-body"><p class="tiny muted">All distinct competencies mapped to the selected staff member (cadre-inherited and direct) are assessed separately on a 0–100 scale.</p><label class="field"><span>Staff member</span><select id="hca-staff"><option value="">Select staff</option>'+staff.map(x=>'<option value="'+x.id+'">'+esc(x.full_name)+' — '+esc(x.email)+'</option>').join('')+'</select></label><label class="field"><span>Assessment cycle</span><input id="hca-cycle" maxlength="80" placeholder="e.g. 2026 Annual"></label><label class="field"><span>Target score (0–100)</span><input id="hca-target" type="number" min="0" max="100" step="1" value="70"></label><div id="hca-detail"></div></div></div>'
       $('#hca-staff').onchange=async()=>{
         const detail=$('#hca-detail'),id=Number($('#hca-staff').value)
@@ -1210,12 +1210,12 @@ async function renderHCOTSection(section) {
         data.estimates.map(x=>'<tr><td>'+esc(x.training_title)+'</td><td>'+esc(x.staff_name)+'</td><td>'+esc(x.currency)+'</td><td>'+Number(x.total_amount).toLocaleString()+'</td><td>'+esc(x.status)+'</td></tr>').join('')+
         (data.estimates.length?'':'<tr><td colspan="5">No cost estimates recorded.</td></tr>')+'</tbody></table></div></div>'
     }else if(section==='reviews'){
-      const [plans,report]=await Promise.all([api('/hcot/plans'),api('/hcot/evaluations/competency-report')])
-      const assessments=report.assessments||[],managers=report.managers||[],requests=report.requests||[]
+      const [plans,report,managerStaff]=await Promise.all([api('/hcot/plans'),api('/hcot/evaluations/competency-report'),api('/hcot/evaluations/manager-staff')])
+      const assessments=report.assessments||[],managers=report.managers||[],requests=report.requests||[],assignedStaff=managerStaff.assignments||[]
       const uniqueStaff=new Set(assessments.map(x=>x.staff_id)).size
       const managerOptions=managers.map(x=>'<option value="'+esc(x.manager_email)+'">'+esc(x.manager_email)+' ('+x.staff_count+' staff)</option>').join('')
       el.innerHTML='<div class="card"><div class="card-head"><h3>Competency assessment outcomes</h3></div><div class="card-body"><p class="tiny muted">All recorded competency assessments across line managers. Results are read-only.</p><p><strong>'+assessments.length+'</strong> assessments across <strong>'+uniqueStaff+'</strong> staff</p><label class="field"><span>Search staff, manager, competency or cycle</span><input id="hce-search" placeholder="Search assessment records"></label><div id="hce-results"></div></div></div>'+
-        '<div class="card mt-16"><div class="card-head"><h3>Request line manager assessments</h3></div><div class="card-body"><p class="tiny muted">Creates an in-app request visible to selected line managers in My Staff Assessments. No email is sent.</p><label class="field"><span>Assessment cycle</span><input id="hce-cycle" maxlength="80" placeholder="e.g. 2026 Annual"></label><label class="field"><span>Line managers (select one or more)</span><select id="hce-managers" multiple size="6">'+managerOptions+'</select></label><button class="btn btn-primary" id="hce-request">Request assessments</button><h4 class="mt-16">Request history</h4><div class="table-wrap"><table><thead><tr><th>Manager</th><th>Cycle</th><th>Requested by</th><th>Date</th><th>Status</th></tr></thead><tbody>'+requests.map(x=>'<tr><td>'+esc(x.manager_email)+'</td><td>'+esc(x.cycle)+'</td><td>'+esc(x.requested_by)+'</td><td>'+esc(x.requested_at)+'</td><td>'+esc(x.status)+'</td></tr>').join('')+(requests.length?'':'<tr><td colspan="5">No requests recorded.</td></tr>')+'</tbody></table></div></div></div>'+
+        '<div class="card mt-16"><div class="card-head"><h3>Request line manager assessments</h3></div><div class="card-body"><p class="tiny muted">Creates an in-app assessment request and attempts to email selected managers when email delivery is configured.</p><label class="field"><span>Assessment cycle</span><input id="hce-cycle" maxlength="80" placeholder="e.g. 2026 Annual"></label><label class="field"><span>Line managers (select one or more)</span><select id="hce-managers" multiple size="6">'+managerOptions+'</select></label><label class="field"><span>Specific staff (optional; select one or more)</span><select id="hce-staff" multiple size="7"></select></label><p class="tiny muted">Leave staff unselected to request assessments for all staff mapped to the selected managers.</p><button class="btn btn-primary" id="hce-request">Request assessments</button><h4 class="mt-16">Request history</h4><div class="table-wrap"><table><thead><tr><th>Manager</th><th>Cycle</th><th>Requested by</th><th>Staff</th><th>Date</th><th>Status</th><th>Email</th></tr></thead><tbody>'+requests.map(x=>'<tr><td>'+esc(x.manager_email)+'</td><td>'+esc(x.cycle)+'</td><td>'+esc(x.requested_by)+'</td><td>'+esc(x.staff_names||'All assigned staff')+'</td><td>'+esc(x.requested_at)+'</td><td>'+esc(x.status)+'</td><td>'+esc(x.email_status||'Not recorded')+'</td></tr>').join('')+(requests.length?'':'<tr><td colspan="7">No requests recorded.</td></tr>')+'</tbody></table></div></div></div>'+
         '<div class="card mt-16"><div class="card-head"><h3>Supervisor training plan evaluations</h3></div><div class="card-body"><label class="field"><span>Training plan</span><select id="hcot-review-plan"><option value="">Select a plan</option>'+plans.plans.map(x=>'<option value="'+x.id+'">'+esc(x.title)+'</option>').join('')+'</select></label><div id="hcot-review-list"></div></div></div>'
       const showAssessments=()=>{
         const q=$('#hce-search').value.trim().toLowerCase()
@@ -1224,11 +1224,20 @@ async function renderHCOTSection(section) {
       }
       $('#hce-search').oninput=showAssessments
       showAssessments()
+      const refreshStaff=()=>{
+        const chosen=new Set(Array.from($('#hce-managers').selectedOptions).map(x=>x.value.toLowerCase()))
+        const selected=new Set(Array.from($('#hce-staff').selectedOptions).map(x=>x.value))
+        const available=assignedStaff.filter(x=>chosen.has(String(x.manager_email).toLowerCase()))
+        $('#hce-staff').innerHTML=available.map(x=>'<option value="'+x.staff_id+'"'+(selected.has(String(x.staff_id))?' selected':'')+'>'+esc(x.full_name)+' — '+esc(x.manager_email)+'</option>').join('')
+      }
+      $('#hce-managers').onchange=refreshStaff
+      refreshStaff()
       $('#hce-request').onclick=async()=>{
         const cycle=$('#hce-cycle').value.trim()
         const manager_emails=Array.from($('#hce-managers').selectedOptions).map(x=>x.value)
+        const staff_ids=Array.from($('#hce-staff').selectedOptions).map(x=>Number(x.value))
         if(!cycle||!manager_emails.length){toast('Enter a cycle and select at least one manager.',true);return}
-        try{const r=await api('/hcot/evaluations/assessment-requests',{method:'POST',body:JSON.stringify({cycle,manager_emails})});toast('Created '+r.created+' assessment requests');renderHCOTSection('reviews')}catch(e){toast(e.message,true)}
+        try{const r=await api('/hcot/evaluations/assessment-requests',{method:'POST',body:JSON.stringify({cycle,manager_emails,staff_ids})});toast('Created '+r.created+' assessment requests. Email: '+r.results.map(x=>x.manager_email+' ('+x.email_status+')').join(', '));renderHCOTSection('reviews')}catch(e){toast(e.message,true)}
       }
       $('#hcot-review-plan').onchange=async()=>{const id=Number($('#hcot-review-plan').value);if(!id)return;const result=await api('/hcot/reviews?plan_id='+id);$('#hcot-review-list').innerHTML='<div class="table-wrap"><table><thead><tr><th>Staff</th><th>Review status</th></tr></thead><tbody>'+result.reviews.map(x=>'<tr><td>'+esc(x.full_name)+'</td><td>'+esc(x.status||'Pending')+'</td></tr>').join('')+'</tbody></table></div>'}
 
