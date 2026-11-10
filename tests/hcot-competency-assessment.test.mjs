@@ -157,3 +157,13 @@ test('line manager mapping and assessment security',()=>{
  assert.match(ui,/data-section="line-managers"/);
  assert.match(ui,/hcot-line-manager-mapping-template.csv/);
 });
+
+test('manual line-manager mapping selects an active Staff Roster employee without changing CSV import',()=>{
+ assert.match(ui,/id="lm-manager"/);
+ assert.match(ui,/staff\.map\(x=>'<option value="/);
+ assert.match(ui,/manager_email:\$\('#lm-manager'\)\.value\.trim\(\)/);
+ assert.doesNotMatch(ui,/id="lm-email"/);
+ assert.match(ui,/staff_email,manager_email\\r\\n/);
+ assert.match(ui,/hcot-line-manager-mapping-template\.csv/);
+ assert.match(api,/api\.post\('\/hcot\/line-manager\/assignments\/import'/);
+});
