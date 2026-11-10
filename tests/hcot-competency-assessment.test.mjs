@@ -222,15 +222,16 @@ test('admin-only evaluations report and requests stay separate from manager-scop
 
 test('HCOT administrator targets only staff mapped to selected line managers with in-app requests',()=>{
  const block=api.slice(api.indexOf("api.get('/hcot/evaluations/manager-staff'"),api.indexOf("api.get('/hcot/line-manager/assessment-requests'"));
- assert.match(block,/isHcotCompetencyAdmin\\(c,session.email\\)/);
- assert.match(block,/staff_ids\\?:number\\[\\]/);
- assert.match(block,/Selected staff must belong to the selected line managers/);
- assert.match(block,/hcot_assessment_request_staff/);
- assert.match(block,/hcot.assessment.requested/);
- assert.doesNotMatch(block,/fetch\\(/);
- assert.doesNotMatch(block,/HCOT_RESEND_API_KEY|HCOT_POWER_AUTOMATE_URL/);
- assert.match(ui,/id="hce-staff"/);
- assert.match(ui,/id="hce-managers"/);
- assert.match(ui,/const staff_ids=Array.from/);
- assert.match(ui,/No email is sent/);
+ assert.ok(block.includes('isHcotCompetencyAdmin(c,session.email)'));
+ assert.ok(block.includes('staff_ids?:number[]'));
+ assert.ok(block.includes('Selected staff must belong to the selected line managers'));
+ assert.ok(block.includes('hcot_assessment_request_staff'));
+ assert.ok(block.includes('hcot.assessment.requested'));
+ assert.ok(!block.includes('fetch('));
+ assert.ok(!block.includes('HCOT_RESEND_API_KEY'));
+ assert.ok(!block.includes('HCOT_POWER_AUTOMATE_URL'));
+ assert.ok(ui.includes('id="hce-staff"'));
+ assert.ok(ui.includes('id="hce-managers"'));
+ assert.ok(ui.includes('const staff_ids=Array.from'));
+ assert.ok(ui.includes('No email is sent'));
 });
