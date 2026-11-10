@@ -907,7 +907,7 @@ async function renderHCOTSection(section) {
       $('#lm-save').onclick=async()=>{try{await api('/hcot/line-manager/assignments',{method:'POST',body:JSON.stringify({staff_id:Number($('#lm-staff').value),manager_email:$('#lm-email').value.trim()})});toast('Line manager assignment saved');renderHCOTSection('line-managers')}catch(e){toast(e.message,true)}}
       $('#lm-template').onclick=()=>{const blob=new Blob(['staff_email,manager_email\r\n'],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='hcot-line-manager-mapping-template.csv';a.click();URL.revokeObjectURL(url)}
       $('#lm-import').onclick=async()=>{const file=$('#lm-file').files?.[0];if(!file||!/\.csv$/i.test(file.name)){toast('Select a CSV file.',true);return}try{const result=await api('/hcot/line-manager/assignments/import',{method:'POST',headers:{'Content-Type':'text/csv'},body:await file.text()});toast('Imported '+result.count+' assignments');renderHCOTSection('line-managers')}catch(e){$('#lm-error').textContent=e.message;toast(e.message,true)}}
-      $('.lm-remove').forEach(btn=>btn.onclick=async()=>{if(!confirm('Remove this line manager assignment?'))return;try{await api('/hcot/line-manager/assignments/'+btn.dataset.id,{method:'DELETE'});renderHCOTSection('line-managers')}catch(e){toast(e.message,true)}})
+      $$('.lm-remove').forEach(btn=>btn.onclick=async()=>{if(!confirm('Remove this line manager assignment?'))return;try{await api('/hcot/line-manager/assignments/'+btn.dataset.id,{method:'DELETE'});renderHCOTSection('line-managers')}catch(e){toast(e.message,true)}})
     }else if(section==='assessments'){
       const roster=await api('/hcot/line-manager/my-staff')
       const staff=roster.staff||[]
