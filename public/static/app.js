@@ -1051,12 +1051,13 @@ async function renderHCOTSection(section) {
         $('#hcg-upload').onclick=async()=>{
           const file=$('#hcg-upload-file').files?.[0]
           if(!file){toast('Select a CSV file first.',true);return}
+          if(!/\.csv$/i.test(file.name)){const msg='This importer accepts CSV UTF-8 files only. In Excel, use Save As → CSV UTF-8 (Comma delimited) (*.csv).';$('#hcg-import-result').textContent=msg;toast(msg,true);return}
           if(file.size>1000000){toast('File exceeds 1 MB.',true);return}
           const btn=$('#hcg-upload');btn.disabled=true
           try{
             const result=await api('/hcot/competency-groups/import',{method:'POST',headers:{'Content-Type':'text/csv'},body:await file.text()})
             toast('Imported '+result.rows+' rows across '+result.groups+' groups');renderHCOTSection('competencies')
-          }catch(e){$('#hcg-import-result').textContent=e.message;toast(e.message,true)}finally{btn.disabled=false}
+          }catch(e){const msg=String(e.message||e);$('#hcg-import-result').textContent=msg;toast(msg,true)}finally{btn.disabled=false}
         }
         $('#hcg-create').onclick=async()=>{try{await api('/hcot/competency-groups',{method:'POST',body:JSON.stringify({name:$('#hcg-name').value})});toast('Group created');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
         $('#hcg-link-comp').onclick=async()=>{try{await api('/hcot/competency-groups/assign-competency',{method:'POST',body:JSON.stringify({group_id:Number($('#hcg-comp-group').value),competency_id:Number($('#hcg-comp').value)})});toast('Competency added to group');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
