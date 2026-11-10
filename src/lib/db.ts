@@ -121,6 +121,13 @@ const SCHEMA = [
     FOREIGN KEY(group_id) REFERENCES hcot_competency_groups(id))`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_hcot_cadre_group_scope
     ON hcot_cadre_group_scopes(cadre_id,group_id,COALESCE(division,''),COALESCE(department,''),COALESCE(unit,''))`,
+  `CREATE TABLE IF NOT EXISTS hcot_line_manager_assignments (
+     staff_id INTEGER PRIMARY KEY,
+     manager_email TEXT NOT NULL COLLATE NOCASE,
+     assigned_by TEXT NOT NULL,
+     assigned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+     FOREIGN KEY(staff_id) REFERENCES staff(id))`,
+  `CREATE INDEX IF NOT EXISTS idx_hcot_line_manager_email ON hcot_line_manager_assignments(manager_email)`,
   `CREATE TABLE IF NOT EXISTS hcot_competency_assessments (
      id INTEGER PRIMARY KEY AUTOINCREMENT,
      staff_id INTEGER NOT NULL,
