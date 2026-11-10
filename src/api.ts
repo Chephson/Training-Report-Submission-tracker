@@ -408,6 +408,23 @@ async function validateStaffDirectory(db:D1Database, division:string|null, depar
 }
 
 /* ---------------- staff roster ---------------- */
+/* Preview-only roster reset preflight. Read-only: never deletes data. */
+api.get('/hcot/preview-roster-reset/preflight', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const counts=await c.env.DB.prepare(`SELECT
+    (SELECT COUNT(*) FROM staff) AS staff,
+    (SELECT COUNT(*) FROM submissions) AS submissions,
+    (SELECT COUNT(*) FROM programme_assignments) AS programme_assignments,
+    (SELECT COUNT(*) FROM hcot_staff_links) AS hcot_staff_links,
+    (SELECT COUNT(*) FROM hcot_mapping_requests) AS hcot_mapping_requests,
+    (SELECT COUNT(*) FROM hcot_participants) AS hcot_participants,
+    (SELECT COUNT(*) FROM hcot_staff_competencies) AS hcot_staff_competencies,
+    (SELECT COUNT(*) FROM hcot_competency_assessments) AS hcot_competency_assessments,
+    (SELECT COUNT(*) FROM hcot_goals) AS hcot_goals,
+    (SELECT COUNT(*) FROM hcot_reviews) AS hcot_reviews`).first()
+  return c.json({ok:true,read_only:true,counts,required_before_reset:['Confirm exact Preview D1 database binding','Create and verify a restorable D1 backup','Export and retain existing Staff Roster','Review dependent-record counts and choose deletion scope','Obtain explicit confirmation before destructive operation'],message:'No data has been deleted. A roster reset is not enabled by this endpoint.'})
+})
 api.get('/staff', async (c) => {
   const rows = await c.env.DB.prepare(
     'SELECT * FROM staff ORDER BY full_name COLLATE NOCASE'
