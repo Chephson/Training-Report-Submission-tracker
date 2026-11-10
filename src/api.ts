@@ -34,7 +34,7 @@ import { previewHandshake } from './lib/hcot-handshake'
 import { verifyAccessJwt } from './lib/hcot-access'
 import { isHcotViewerRead } from './lib/hcot-roles'
 
-export type Env = { DB: D1Database; HCOT_ACCESS_TEAM_DOMAIN?: string; HCOT_ACCESS_AUD?: string; HCOT_SETTINGS_ADMIN_EMAILS?: string; HCOT_POWER_AUTOMATE_URL?: string }
+export type Env = { DB: D1Database; HCOT_ACCESS_TEAM_DOMAIN?: string; HCOT_ACCESS_AUD?: string; HCOT_SETTINGS_ADMIN_EMAILS?: string; HCOT_RESEND_API_KEY?: string; HCOT_EMAIL_FROM?: string }
 const api = new Hono<{ Bindings: Env }>()
 
 api.use('/*', cors({ origin: (origin, c) => { try { return new URL(origin).origin === new URL(c.req.url).origin ? origin : '' } catch { return '' } }, allowHeaders: ['Content-Type', 'X-Access-Code'] }))
@@ -1364,35 +1364,40 @@ api.post('/hcot/evaluations/assessment-requests', async c=>{
     const requestId=Number(created.meta.last_row_id)
     await c.env.DB.batch(selected.map(x=>c.env.DB.prepare('INSERT INTO hcot_assessment_request_staff(request_id,staff_id) VALUES(?,?)').bind(requestId,x.staff_id)))
     let status='not_configured',reference='',error=''
-    const flowUrl=c.env.HCOT_POWER_AUTOMATE_URL?.trim()
-    if(flowUrl){
+    if(c.env.HCOT_RESEND_API_KEY?.trim()&&c.env.HCOT_EMAIL_FROM?.trim()){
       try{
-        const url=new URL(flowUrl)
-        const hostname=url.hostname.toLowerCase()
-        if(url.protocol!=='https:'||!(hostname.endsWith('.logic.azure.com')||hostname.endsWith('.api.powerplatform.com'))){
-          status='failed';error='Power Automate trigger URL must use an approved Microsoft HTTPS host.'
-        }else{
-          const response=await fetch(url.toString(),{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({
-              request_id:requestId,
-              manager_email:email,
-              assessment_cycle:cycle,
-              requested_by:session.email,
-              staff:selected.map(x=>({staff_id:x.staff_id,full_name:x.full_name})),
-              subject:'HCOT competency assessment request — '+cycle,
-              message:'An approved HCOT administrator has requested competency assessments for the staff listed in this notification. Sign in to the HCOT Training Monitor and open My Staff Assessments.'
-            })})
-          if(response.ok){status='submitted_to_flow';reference='HTTP '+response.status}
-          else{status='failed';error='Power Automate trigger returned HTTP '+response.status+'.'}
-        }
-      }catch{status='failed';error='Power Automate trigger could not be reached or its URL was invalid.'}
+        const response=await fetch('https://api.resend.com/emails',{
+          method:'POST',
+          headers:{
+            'Authorization':'Bearer '+c.env.HCOT_RESEND_API_KEY,
+            'Content-Type':'application/json',
+            'Idempotency-Key':'hcot-assessment-request-'+requestId
+          },
+          body:JSON.stringify({
+            from:c.env.HCOT_EMAIL_FROM,
+            to:[email],
+            subject:'HCOT competency assessment request — '+cycle,
+            text:[
+              'An approved HCOT administrator has requested competency assessments.',
+              'Assessment cycle: '+cycle,
+              'Staff requiring assessment:',
+              ...selected.map(x=>'- '+x.full_name),
+              '',
+              'Sign in to the HCOT Training Monitor and open My Staff Assessments to complete the assessments.'
+            ].join('\\n')
+          })
+        })
+        const result=await response.json().catch(()=>({})) as {id?:string}
+        if(response.ok&&result.id){status='accepted_by_provider';reference=result.id}
+        else{status='failed';error='Resend did not accept the notification (HTTP '+response.status+').'}
+      }catch{status='failed';error='Resend email service could not be reached.'}
     }
     await c.env.DB.prepare('INSERT INTO hcot_assessment_email_log(request_id,status,provider_reference,error_message) VALUES(?,?,?,?)').bind(requestId,status,reference,error).run()
     outcomes.push({manager_email:email,request_id:requestId,email_status:status,staff_count:selected.length})
   }
   await log(c.env.DB,'hcot.assessment.requested',JSON.stringify({cycle,requests:outcomes.map(x=>({manager:x.manager_email,id:x.request_id,status:x.email_status}))}),session.email)
   return c.json({ok:true,created:outcomes.filter(x=>x.email_status!=='already_pending').length,results:outcomes,
-    email_configured:!!c.env.HCOT_POWER_AUTOMATE_URL})
+    email_configured:!!(c.env.HCOT_RESEND_API_KEY?.trim()&&c.env.HCOT_EMAIL_FROM?.trim())})
 })
 api.get('/hcot/line-manager/assessment-requests', async c=>{
   const manager=await requireAssessmentManager(c)
