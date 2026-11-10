@@ -1236,11 +1236,88 @@ api.post('/hcot/cadre-competencies/bulk', async c => {
 })
 
 // Assessment eligibility is derived live from cadre mappings, not copied to staff records.
-api.get('/hcot/competency-assessments', async c => {
+
+/* Manager identity comes exclusively from verified Cloudflare Access, never a client-supplied email. */
+async function requireAssessmentManager(c:any){
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session)return {error:'Cloudflare Access authentication required.',status:401}
+  if(await isHcotCompetencyAdmin(c,session.email))return {error:'HCOT administrators cannot access competency assessments.',status:403}
+  const email=session.email.trim().toLowerCase()
+  const count=await c.env.DB.prepare('SELECT COUNT(*) AS n FROM hcot_line_manager_assignments a JOIN staff s ON s.id=a.staff_id WHERE a.manager_email=? AND s.active=1').bind(email).first<{n:number}>()
+  if(!count||count.n<1)return {error:'No active staff are assigned to this line manager.',status:403}
+  return {email}
+}
+async function isAssignedToManager(c:any,staffId:number,email:string){
+  const row=await c.env.DB.prepare('SELECT 1 AS found FROM hcot_line_manager_assignments a JOIN staff s ON s.id=a.staff_id WHERE a.staff_id=? AND a.manager_email=? AND s.active=1').bind(staffId,email).first()
+  return !!row
+}
+api.get('/hcot/line-manager/my-staff', async c=>{
+  const manager=await requireAssessmentManager(c)
+  if(manager.error)return c.json({error:manager.error},manager.status as 401|403)
+  const result=await c.env.DB.prepare('SELECT s.id,s.full_name,s.email,s.team AS division,s.role AS department,s.unit,s.cadre_id FROM staff s JOIN hcot_line_manager_assignments a ON a.staff_id=s.id WHERE a.manager_email=? AND s.active=1 ORDER BY s.full_name COLLATE NOCASE').bind(manager.email).all()
+  return c.json({staff:result.results||[]})
+})
+api.get('/hcot/line-manager/assignments', async c=>{
   const session=await verifyAccessJwt(c.req.raw,c.env)
   if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const rows=await c.env.DB.prepare('SELECT a.staff_id,a.manager_email,a.assigned_by,a.assigned_at,s.full_name,s.email AS staff_email FROM hcot_line_manager_assignments a JOIN staff s ON s.id=a.staff_id ORDER BY a.manager_email,s.full_name').all()
+  return c.json({assignments:rows.results||[]})
+})
+api.post('/hcot/line-manager/assignments', async c=>{
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const b=await c.req.json<{staff_id?:number;manager_email?:string}>().catch(()=>({}))
+  const staffId=Number(b.staff_id),email=String(b.manager_email||'').trim().toLowerCase()
+  if(!Number.isSafeInteger(staffId)||staffId<1||!/^\S+@\S+\.\S+$/.test(email))return c.json({error:'Valid staff ID and manager email are required.'},400)
+  if(email===session.email.trim().toLowerCase() || (c.env.HCOT_SETTINGS_ADMIN_EMAILS||'').split(',').some((x:string)=>x.trim().toLowerCase()===email))return c.json({error:'HCOT administrators cannot be assigned as line managers.'},403)
+  const staff=await c.env.DB.prepare('SELECT id,email,active FROM staff WHERE id=?').bind(staffId).first<{id:number;email:string;active:number}>()
+  if(!staff||Number(staff.active)!==1)return c.json({error:'Select an active employee from the Staff Roster.'},400)
+  if(staff.email.trim().toLowerCase()===email)return c.json({error:'Employees cannot assess themselves.'},400)
+  await c.env.DB.prepare('INSERT INTO hcot_line_manager_assignments(staff_id,manager_email,assigned_by) VALUES(?,?,?) ON CONFLICT(staff_id) DO UPDATE SET manager_email=excluded.manager_email,assigned_by=excluded.assigned_by,assigned_at=CURRENT_TIMESTAMP').bind(staffId,email,session.email).run()
+  await log(c.env.DB,'hcot_line_manager_assignment',JSON.stringify({staff_id:staffId,manager_email:email}),session.email)
+  return c.json({ok:true})
+})
+api.delete('/hcot/line-manager/assignments/:staffId', async c=>{
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const id=Number(c.req.param('staffId'))
+  if(!Number.isSafeInteger(id)||id<1)return c.json({error:'Invalid staff ID.'},400)
+  await c.env.DB.prepare('DELETE FROM hcot_line_manager_assignments WHERE staff_id=?').bind(id).run()
+  await log(c.env.DB,'hcot_line_manager_unassignment',String(id),session.email)
+  return c.json({ok:true})
+})
+api.post('/hcot/line-manager/assignments/import', async c=>{
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const csv=await c.req.text()
+  if(csv.length>1000000)return c.json({error:'CSV exceeds 1 MB.'},413)
+  const {headers,rows}=parseDelimited(csv)
+  const norm=(x:string)=>x.trim().toLowerCase().replace(/\s+/g,'_')
+  const staffIndex=headers.findIndex(h=>norm(h)==='staff_email'),managerIndex=headers.findIndex(h=>norm(h)==='manager_email')
+  if(staffIndex<0||managerIndex<0)return c.json({error:'Required CSV columns: staff_email,manager_email.'},400)
+  if(!rows.length||rows.length>1000)return c.json({error:'Provide 1–1000 rows.'},400)
+  const errors:string[]=[],prepared:{id:number;email:string}[]=[],seen=new Set<number>()
+  const admins=(c.env.HCOT_SETTINGS_ADMIN_EMAILS||'').split(',').map((x:string)=>x.trim().toLowerCase())
+  for(const [index,row] of rows.entries()){
+    const staffEmail=String(row[staffIndex]||'').trim().toLowerCase(),email=String(row[managerIndex]||'').trim().toLowerCase()
+    if(!/^\S+@\S+\.\S+$/.test(email)||admins.includes(email)||staffEmail===email){errors.push('Row '+(index+2)+': invalid manager, administrator, or self-assignment.');continue}
+    const matches=await c.env.DB.prepare('SELECT id FROM staff WHERE LOWER(TRIM(email))=? AND active=1').bind(staffEmail).all<{id:number}>()
+    if(matches.results.length!==1){errors.push('Row '+(index+2)+': staff email must identify exactly one active roster record.');continue}
+    const id=matches.results[0].id
+    if(seen.has(id)){errors.push('Row '+(index+2)+': duplicate staff assignment in CSV.');continue}
+    seen.add(id);prepared.push({id,email})
+  }
+  if(errors.length)return c.json({error:'Import rejected; no assignments applied.',errors,error_count:errors.length},400)
+  await c.env.DB.batch(prepared.map(x=>c.env.DB.prepare('INSERT INTO hcot_line_manager_assignments(staff_id,manager_email,assigned_by) VALUES(?,?,?) ON CONFLICT(staff_id) DO UPDATE SET manager_email=excluded.manager_email,assigned_by=excluded.assigned_by,assigned_at=CURRENT_TIMESTAMP').bind(x.id,x.email,session.email)))
+  await log(c.env.DB,'hcot_line_manager_bulk_import',JSON.stringify({count:prepared.length}),session.email)
+  return c.json({ok:true,count:prepared.length})
+})
+api.get('/hcot/competency-assessments', async c => {
+  const manager=await requireAssessmentManager(c)
+  if(manager.error)return c.json({error:manager.error},manager.status as 401|403)
   const staffId=Number(c.req.query('staff_id'))
   if(!Number.isSafeInteger(staffId)||staffId<=0)return c.json({error:'Select a staff member.'},400)
+  if(!(await isAssignedToManager(c,staffId,manager.email!)))return c.json({error:'Staff member is not assigned to this line manager.'},403)
   const staff=await c.env.DB.prepare('SELECT id,full_name,email,team,role,unit,cadre_id FROM staff WHERE id=?').bind(staffId).first()
   if(!staff)return c.json({error:'Staff member not found.'},404)
   const eligible=await c.env.DB.prepare(`WITH inherited AS (
@@ -1277,14 +1354,15 @@ api.get('/hcot/competency-assessments', async c => {
   return c.json({staff,competencies:eligible.results||[],assessments:history.results||[]})
 })
 api.post('/hcot/competency-assessments', async c => {
-  const session=await verifyAccessJwt(c.req.raw,c.env)
-  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const manager=await requireAssessmentManager(c)
+  if(manager.error)return c.json({error:manager.error},manager.status as 401|403)
   const b=await c.req.json<{staff_id?:number;competency_id?:number;cycle?:string;score?:number;target_score?:number;notes?:string}>().catch(()=>({}))
   const staffId=Number(b.staff_id),competencyId=Number(b.competency_id),score=Number(b.score),target=b.target_score===undefined?70:Number(b.target_score)
   const cycle=String(b.cycle||'').trim(),notes=String(b.notes||'').trim()
   if(!Number.isSafeInteger(staffId)||staffId<=0||!Number.isSafeInteger(competencyId)||competencyId<=0)return c.json({error:'Select staff and competency.'},400)
   if(!Number.isInteger(score)||score<0||score>100||!Number.isInteger(target)||target<0||target>100)return c.json({error:'Scores and targets must be whole numbers from 0 to 100.'},400)
   if(!cycle||cycle.length>80||notes.length>2000)return c.json({error:'Invalid assessment cycle or notes.'},400)
+  if(!(await isAssignedToManager(c,staffId,manager.email!)))return c.json({error:'Staff member is not assigned to this line manager.'},403)
   const eligible=await c.env.DB.prepare(`SELECT 1 AS eligible FROM staff s
     WHERE s.id=? AND s.active=1 AND (
       EXISTS(SELECT 1 FROM hcot_staff_competencies d WHERE d.staff_id=s.id AND d.competency_id=?)
