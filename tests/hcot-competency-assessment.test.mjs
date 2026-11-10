@@ -97,3 +97,21 @@ test('bulk import records the authenticated administrator and summary in the act
  assert.match(section,/scope_mappings:/);
  assert.match(section,/global_mappings:/);
 });
+
+test('cadre rename and deletion require HCOT administrator and preserve referential integrity',()=>{
+ const rename=api.slice(api.indexOf("api.patch('/hcot/cadres/:id'"),api.indexOf("api.delete('/hcot/cadres/:id'"));
+ const remove=api.slice(api.indexOf("api.delete('/hcot/cadres/:id'"),api.indexOf("api.patch('/hcot/staff/:id/cadre'"));
+ for(const route of [rename,remove])assert.match(route,/isHcotCompetencyAdmin\(c,session.email\)/);
+ assert.match(rename,/UPDATE hcot_cadres SET name=/);
+ assert.match(rename,/Another cadre already has this name/);
+ assert.match(remove,/FROM staff WHERE cadre_id=/);
+ assert.match(remove,/FROM hcot_cadre_competencies WHERE cadre_id=/);
+ assert.match(remove,/FROM hcot_cadre_groups WHERE cadre_id=/);
+ assert.match(remove,/FROM hcot_cadre_group_scopes WHERE cadre_id=/);
+ assert.match(remove,/Cadre is in use/);
+ assert.match(rename,/hcot.cadre.renamed/);
+ assert.match(remove,/hcot.cadre.deleted/);
+ assert.match(ui,/id="hcot-cadre-manage"/);
+ assert.match(ui,/id="hcot-cadre-update"/);
+ assert.match(ui,/id="hcot-cadre-delete"/);
+});
