@@ -141,6 +141,15 @@ const SCHEMA = [
      FOREIGN KEY(staff_id) REFERENCES staff(id),
      FOREIGN KEY(competency_id) REFERENCES hcot_competencies(id))`,
   `CREATE INDEX IF NOT EXISTS idx_hcot_assessments_staff_cycle ON hcot_competency_assessments(staff_id,cycle,assessed_at)`,
+  `CREATE TABLE IF NOT EXISTS hcot_assessment_requests (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     manager_email TEXT NOT NULL,
+     cycle TEXT NOT NULL,
+     requested_by TEXT NOT NULL,
+     requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+     status TEXT NOT NULL DEFAULT 'pending',
+     CHECK(status IN ('pending','completed')))`,
+  `CREATE INDEX IF NOT EXISTS idx_hcot_assessment_requests_manager ON hcot_assessment_requests(manager_email,status)`,
   `CREATE TABLE IF NOT EXISTS hcot_goals (
      id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
      scope TEXT NOT NULL DEFAULT 'unit', owner_label TEXT,
