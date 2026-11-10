@@ -217,33 +217,20 @@ test('admin-only evaluations report and requests stay separate from manager-scop
  assert.match(ui,/Competency assessment outcomes/);
  assert.match(ui,/Request line manager assessments/);
  assert.match(ui,/hcot\/line-manager\/assessment-requests/);
- assert.match(ui,/attempts to email selected managers when email delivery is configured/);
+ assert.match(ui,/No email is sent/);
 });
 
-test('HCOT admin targets assigned staff and records email outcomes without exposing mail secrets',()=>{
+test('HCOT administrator targets only staff mapped to selected line managers with in-app requests',()=>{
  const block=api.slice(api.indexOf("api.get('/hcot/evaluations/manager-staff'"),api.indexOf("api.get('/hcot/line-manager/assessment-requests'"));
- assert.match(block,/isHcotCompetencyAdmin\(c,session.email\)/);
- assert.match(block,/staff_ids\?:number\[\]/);
+ assert.match(block,/isHcotCompetencyAdmin\\(c,session.email\\)/);
+ assert.match(block,/staff_ids\\?:number\\[\\]/);
  assert.match(block,/Selected staff must belong to the selected line managers/);
  assert.match(block,/hcot_assessment_request_staff/);
- assert.match(block,/HCOT_RESEND_API_KEY/);
- assert.match(block,/HCOT_EMAIL_FROM/);
- assert.match(block,/hcot_assessment_email_log/);
- assert.match(block,/email_status:status/);
+ assert.match(block,/hcot.assessment.requested/);
+ assert.doesNotMatch(block,/fetch\\(/);
+ assert.doesNotMatch(block,/HCOT_RESEND_API_KEY|HCOT_POWER_AUTOMATE_URL/);
  assert.match(ui,/id="hce-staff"/);
  assert.match(ui,/id="hce-managers"/);
  assert.match(ui,/const staff_ids=Array.from/);
- assert.match(ui,/email_status/);
-});
-
-test('Resend notification credentials stay server-side and provider acceptance is tracked',()=>{
- assert.match(api,/HCOT_RESEND_API_KEY\?: string/);
- assert.match(api,/HCOT_EMAIL_FROM\?: string/);
- assert.match(api,/https:\/\/api\.resend\.com\/emails/);
- assert.match(api,/Idempotency-Key/);
- assert.match(api,/status='accepted_by_provider'/);
- assert.match(api,/manager_email:email/);
- assert.match(api,/selected\.map\(x=>'- '\+x\.full_name\)/);
- assert.doesNotMatch(ui,/HCOT_RESEND_API_KEY/);
- assert.doesNotMatch(api,/HCOT_POWER_AUTOMATE_URL/);
+ assert.match(ui,/No email is sent/);
 });
