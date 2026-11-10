@@ -122,3 +122,18 @@ test('cadre management and assignment selectors display names, not numeric ident
  assert.doesNotMatch(ui,/options\(cadres\.map\(x=>String\(x\.id\)\),'Select cadre'\)/);
  assert.doesNotMatch(ui,/options\(cadres\.filter\(x=>x\.active\)\.map\(x=>String\(x\.id\)\)/);
 });
+
+test('preview roster reset requires admin, preview hostname, environment gates, backup and count confirmation',()=>{
+ const route=api.slice(api.indexOf("api.post('/hcot/preview-roster-reset/execute'"),api.indexOf("api.get('/staff'"));
+ assert.match(route,/isHcotCompetencyAdmin\(c,session.email\)/);
+ assert.match(route,/HCOT_PREVIEW_ROSTER_RESET_ENABLED/);
+ assert.match(route,/HCOT_PREVIEW_D1_DATABASE_ID/);
+ assert.match(route,/RESET 21 PREVIEW TEST STAFF/);
+ assert.match(route,/backup_verified/);
+ assert.match(route,/export_verified/);
+ assert.match(route,/current\?\.staff!==21/);
+ assert.match(route,/DB\.batch\(statements\)/);
+ for(const table of ['hcot_cost_estimates','hcot_reviews','hcot_participants','hcot_competency_assessments','hcot_staff_competencies','hcot_staff_links','hcot_mapping_requests','programme_assignments','submissions'])assert.ok(route.includes(table),table);
+ assert.doesNotMatch(route,/DELETE FROM hcot_cadres/);
+ assert.doesNotMatch(route,/DELETE FROM hcot_goals/);
+});
