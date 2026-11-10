@@ -232,6 +232,18 @@ test('HCOT administrator targets only staff mapped to selected line managers wit
  assert.ok(!block.includes('HCOT_POWER_AUTOMATE_URL'));
  assert.ok(ui.includes('id="hce-staff"'));
  assert.ok(ui.includes('id="hce-managers"'));
- assert.ok(ui.includes('const staff_ids=Array.from'));
+ assert.ok(ui.includes('const staff_ids=selectedStaff()'));
  assert.ok(ui.includes('No email is sent'));
+});
+
+test('Evaluations manager and staff selectors are compact multi-select dropdowns',()=>{
+ assert.ok(ui.includes('<details id="hce-managers"'));
+ assert.ok(ui.includes('<details id="hce-staff"'));
+ assert.ok(ui.includes('hce-manager-choice'));
+ assert.ok(ui.includes('hce-staff-choice'));
+ assert.ok(ui.includes('const manager_emails=selectedManagers()'));
+ assert.ok(ui.includes('const staff_ids=selectedStaff()'));
+ assert.ok(ui.includes('refreshStaffLabel()'));
+ assert.ok(!ui.includes('id="hce-managers" multiple size="6"'));
+ assert.ok(!ui.includes('id="hce-staff" multiple size="7"'));
 });
