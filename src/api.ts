@@ -1309,6 +1309,49 @@ api.post('/hcot/line-manager/assignments/import', async c=>{
   await log(c.env.DB,'hcot_line_manager_bulk_import',JSON.stringify({count:prepared.length}),session.email)
   return c.json({ok:true,count:prepared.length})
 })
+/* HCOT Evaluations: cross-manager reporting and explicit in-app assessment requests. */
+api.get('/hcot/evaluations/competency-report', async c=>{
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const [assessments,managers,requests]=await Promise.all([
+    c.env.DB.prepare(`SELECT a.id,a.staff_id,s.full_name,s.email AS staff_email,a.competency_id,p.name AS competency_name,
+      a.cycle,a.score,a.target_score,a.notes,a.assessor_email,a.assessed_at,
+      (a.target_score-a.score) AS score_gap
+      FROM hcot_competency_assessments a JOIN staff s ON s.id=a.staff_id
+      JOIN hcot_competencies p ON p.id=a.competency_id
+      ORDER BY a.assessed_at DESC,a.id DESC LIMIT 5000`).all(),
+    c.env.DB.prepare(`SELECT a.manager_email,COUNT(*) AS staff_count FROM hcot_line_manager_assignments a
+      JOIN staff s ON s.id=a.staff_id WHERE s.active=1 GROUP BY a.manager_email ORDER BY a.manager_email`).all(),
+    c.env.DB.prepare('SELECT * FROM hcot_assessment_requests ORDER BY requested_at DESC,id DESC LIMIT 500').all()
+  ])
+  return c.json({assessments:assessments.results||[],managers:managers.results||[],requests:requests.results||[]})
+})
+api.post('/hcot/evaluations/assessment-requests', async c=>{
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const body=await c.req.json<{manager_emails?:string[];cycle?:string}>().catch(()=>({}))
+  const cycle=String(body.cycle||'').trim()
+  const emails=[...new Set((Array.isArray(body.manager_emails)?body.manager_emails:[]).map(x=>String(x).trim().toLowerCase()))]
+  if(!cycle||cycle.length>80||!emails.length||emails.length>200)return c.json({error:'Provide an assessment cycle and 1–200 managers.'},400)
+  const allowed=await c.env.DB.prepare(`SELECT DISTINCT LOWER(TRIM(a.manager_email)) AS email FROM hcot_line_manager_assignments a
+    JOIN staff s ON s.id=a.staff_id WHERE s.active=1`).all<{email:string}>()
+  const eligible=new Set((allowed.results||[]).map(x=>x.email))
+  if(emails.some(email=>!eligible.has(email)))return c.json({error:'Every selected manager must have active assigned staff.'},400)
+  const existing=await c.env.DB.prepare('SELECT manager_email FROM hcot_assessment_requests WHERE cycle=? AND status=?').bind(cycle,'pending').all<{manager_email:string}>()
+  const pending=new Set((existing.results||[]).map(x=>x.manager_email))
+  const toCreate=emails.filter(email=>!pending.has(email))
+  if(toCreate.length)await c.env.DB.batch(toCreate.map(email=>c.env.DB.prepare(
+    'INSERT INTO hcot_assessment_requests(manager_email,cycle,requested_by) VALUES(?,?,?)'
+  ).bind(email,cycle,session.email)))
+  await log(c.env.DB,'hcot.assessment.requested',JSON.stringify({cycle,managers:toCreate}),session.email)
+  return c.json({ok:true,created:toCreate.length,already_pending:emails.length-toCreate.length})
+})
+api.get('/hcot/line-manager/assessment-requests', async c=>{
+  const manager=await requireAssessmentManager(c)
+  if(manager.error)return c.json({error:manager.error},manager.status as 401|403)
+  const requests=await c.env.DB.prepare('SELECT id,cycle,requested_at,status FROM hcot_assessment_requests WHERE manager_email=? ORDER BY requested_at DESC,id DESC LIMIT 100').bind(manager.email).all()
+  return c.json({requests:requests.results||[]})
+})
 api.get('/hcot/competency-assessments', async c => {
   const manager=await requireAssessmentManager(c)
   if(manager.error)return c.json({error:manager.error},manager.status as 401|403)
