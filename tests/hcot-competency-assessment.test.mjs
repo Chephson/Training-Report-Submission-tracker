@@ -1,8 +1,8 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';
 const api=readFileSync('src/api.ts','utf8'),db=readFileSync('src/lib/db.ts','utf8'),ui=readFileSync('public/static/app.js','utf8');
 test('assessments persist 0–100 scores with history and target',()=>{assert.match(db,/CREATE TABLE IF NOT EXISTS hcot_competency_assessments/);assert.match(db,/CHECK\(score BETWEEN 0 AND 100\)/);assert.match(db,/target_score INTEGER NOT NULL DEFAULT 70/)});
-test('assessments enforce HCOT admin and live cadre eligibility',()=>{assert.match(api,/api.post\('\/hcot\/competency-assessments'/);assert.match(api,/isHcotCompetencyAdmin\(c,session.email\)/);assert.match(api,/Competency is not currently mapped/);assert.match(api,/JOIN hcot_cadre_competencies m ON m.cadre_id=s.cadre_id/)});
-test('assessment UI supports per competency score and history',()=>{assert.match(ui,/data-section="assessments"/);assert.match(ui,/hca-score/);assert.match(ui,/Assessment history/)});
+test('assessments require assigned non-admin line managers and live cadre eligibility',()=>{assert.match(api,/api.post\('\/hcot\/competency-assessments'/);assert.match(api,/requireAssessmentManager\(c\)/);assert.match(api,/isAssignedToManager\(c,staffId,manager.email!/);assert.match(api,/Competency is not currently mapped/);assert.match(api,/JOIN hcot_cadre_competencies m ON m.cadre_id=s.cadre_id/)});
+test('assessment UI supports per competency score and history',()=>{assert.match(ui,/renderHCOTSection\('assessments'\)/);assert.match(ui,/hca-score/);assert.match(ui,/Assessment history/)});
 
 test('assessment eligibility includes direct and inherited mappings without duplicates',()=>{
   const section=api.slice(api.indexOf("api.get('/hcot/competency-assessments'"),api.indexOf("api.get('/hcot/effective-competencies'"));
@@ -53,9 +53,9 @@ test('cadre group mapping supports optional organisational scopes without losing
  assert.match(ui,/hcg-scope-div/)
  assert.match(ui,/hcg-scope-dept/)
  assert.match(ui,/hcg-scope-unit/)
- assert.match(ui,/same\(x.division,data.staff.team\)/)
- assert.match(ui,/same\(x.department,data.staff.role\)/)
- assert.match(ui,/same\(x.unit,data.staff.unit\)/)
+ assert.match(api,/gs.division IS NULL/)
+ assert.match(api,/gs.department IS NULL/)
+ assert.match(api,/gs.unit IS NULL/)
 })
 
 test('competency group CSV bulk upload is admin-gated and validates scoped mapping rows',()=>{
@@ -144,4 +144,16 @@ test('staff CSV import reports rejected rows and does not silently succeed with 
  assert.match(section,/problems: problems.slice\(0, 25\)/);
  assert.match(section,/422/);
  assert.match(ui,/data\.problems\.slice\(0, 25\)/);
+});
+
+
+test('line manager mapping and assessment security',()=>{
+ assert.match(db,/CREATE TABLE IF NOT EXISTS hcot_line_manager_assignments/);
+ assert.match(api,/api.post\('\/hcot\/line-manager\/assignments\/import'/);
+ assert.match(api,/api.post\('\/hcot\/line-manager\/assignments'/);
+ assert.match(api,/api.get\('\/hcot\/line-manager\/my-staff'/);
+ assert.match(api,/HCOT administrators cannot access competency assessments/);
+ assert.match(api,/Staff member is not assigned to this line manager/);
+ assert.match(ui,/data-section="line-managers"/);
+ assert.match(ui,/hcot-line-manager-mapping-template.csv/);
 });
