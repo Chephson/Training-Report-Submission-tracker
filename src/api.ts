@@ -1061,6 +1061,39 @@ api.post('/hcot/cadres', async c => {
   const result=await c.env.DB.prepare('INSERT INTO hcot_cadres(name) VALUES(?)').bind(name).run()
   return c.json({ok:true,id:result.meta.last_row_id},201)
 })
+api.patch('/hcot/cadres/:id', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const id=Number(c.req.param('id'))
+  const body=await c.req.json<{name?:string}>().catch(()=>({}))
+  const name=String(body.name||'').trim()
+  if(!Number.isSafeInteger(id)||id<=0||!name||name.length>120)return c.json({error:'Valid cadre ID and name (1–120 characters) required.'},400)
+  const existing=await c.env.DB.prepare('SELECT id,name FROM hcot_cadres WHERE id=?').bind(id).first<{id:number;name:string}>()
+  if(!existing)return c.json({error:'Cadre not found.'},404)
+  const duplicate=await c.env.DB.prepare('SELECT id FROM hcot_cadres WHERE name=? COLLATE NOCASE AND id<>?').bind(name,id).first()
+  if(duplicate)return c.json({error:'Another cadre already has this name.'},409)
+  await c.env.DB.prepare('UPDATE hcot_cadres SET name=? WHERE id=?').bind(name,id).run()
+  await log(c.env.DB,'hcot.cadre.renamed',JSON.stringify({id,previous_name:existing.name,new_name:name}),session.email)
+  return c.json({ok:true,id,name})
+})
+api.delete('/hcot/cadres/:id', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const id=Number(c.req.param('id'))
+  if(!Number.isSafeInteger(id)||id<=0)return c.json({error:'Invalid cadre ID.'},400)
+  const existing=await c.env.DB.prepare('SELECT id,name FROM hcot_cadres WHERE id=?').bind(id).first<{id:number;name:string}>()
+  if(!existing)return c.json({error:'Cadre not found.'},404)
+  const usage=await c.env.DB.prepare(`SELECT
+    (SELECT COUNT(*) FROM staff WHERE cadre_id=?) AS staff_count,
+    (SELECT COUNT(*) FROM hcot_cadre_competencies WHERE cadre_id=?) AS competency_count,
+    (SELECT COUNT(*) FROM hcot_cadre_groups WHERE cadre_id=?) AS group_count,
+    (SELECT COUNT(*) FROM hcot_cadre_group_scopes WHERE cadre_id=?) AS scope_count`).bind(id,id,id,id).first<{staff_count:number;competency_count:number;group_count:number;scope_count:number}>()
+  if(usage && Object.values(usage).some(n=>Number(n)>0))return c.json({error:'Cadre is in use. Reassign staff and remove its competency/group mappings before deletion.',usage},409)
+  const removed=await c.env.DB.prepare('DELETE FROM hcot_cadres WHERE id=? AND NOT EXISTS(SELECT 1 FROM staff WHERE cadre_id=?) AND NOT EXISTS(SELECT 1 FROM hcot_cadre_competencies WHERE cadre_id=?) AND NOT EXISTS(SELECT 1 FROM hcot_cadre_groups WHERE cadre_id=?) AND NOT EXISTS(SELECT 1 FROM hcot_cadre_group_scopes WHERE cadre_id=?)').bind(id,id,id,id,id).run()
+  if(!removed.meta.changes)return c.json({error:'Cadre became referenced and cannot be deleted.'},409)
+  await log(c.env.DB,'hcot.cadre.deleted',JSON.stringify({id,name:existing.name}),session.email)
+  return c.json({ok:true})
+})
 api.patch('/hcot/staff/:id/cadre', async c => {
   const session=await verifyAccessJwt(c.req.raw,c.env)
   if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
