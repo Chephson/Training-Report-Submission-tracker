@@ -1510,6 +1510,17 @@ David Okafor,david.okafor@example.org,Mathematics"></textarea>
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Import failed')
+      const problems = Array.isArray(data.problems) ? data.problems : []
+      const skipped = Number(data.skipped) || 0
+      if (skipped || problems.length) {
+        const detail = problems.slice(0, 25).join('\\n')
+        const message = `Imported: ${data.count || 0}; skipped: ${skipped}.` +
+          (detail ? `\\n\\nReasons:\\n${detail}` : '')
+        // Keep the import dialog and original CSV open so invalid rows can be corrected.
+        alert(message)
+        if (data.count) navigate('roster', true)
+        return
+      }
       m.close()
       toast(`${data.count} staff member${data.count === 1 ? '' : 's'} imported`)
       navigate('roster', true)
