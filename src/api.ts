@@ -1345,10 +1345,19 @@ api.get('/hcot/competency-assessments', async c => {
     LEFT JOIN hcot_group_competencies gg ON gg.competency_id=p.id
     LEFT JOIN hcot_competency_groups g ON g.id=gg.group_id
     GROUP BY p.id,p.name,p.category,gg.group_id,g.name ORDER BY p.name COLLATE NOCASE`).bind(staffId,staffId,staffId).all()
+  const linkedGroups=await c.env.DB.prepare(`SELECT DISTINCT g.id,g.name FROM hcot_competency_groups g
+    JOIN staff s ON s.id=?
+    WHERE s.active=1 AND (
+      EXISTS(SELECT 1 FROM hcot_cadre_groups cg WHERE cg.group_id=g.id AND cg.cadre_id=s.cadre_id)
+      OR EXISTS(SELECT 1 FROM hcot_cadre_group_scopes gs WHERE gs.group_id=g.id AND gs.cadre_id=s.cadre_id
+        AND (gs.division IS NULL OR LOWER(TRIM(gs.division))=LOWER(TRIM(COALESCE(s.team,''))))
+        AND (gs.department IS NULL OR LOWER(TRIM(gs.department))=LOWER(TRIM(COALESCE(s.role,''))))
+        AND (gs.unit IS NULL OR LOWER(TRIM(gs.unit))=LOWER(TRIM(COALESCE(s.unit,'')))))
+    ) ORDER BY g.name COLLATE NOCASE`).bind(staffId).all()
   const history=await c.env.DB.prepare(`SELECT a.*,p.name AS competency_name,p.category FROM hcot_competency_assessments a
     JOIN hcot_competencies p ON p.id=a.competency_id WHERE a.staff_id=?
     ORDER BY a.assessed_at DESC,a.id DESC LIMIT 500`).bind(staffId).all()
-  return c.json({staff,competencies:eligible.results||[],assessments:history.results||[]})
+  return c.json({staff,competencies:eligible.results||[],groups:linkedGroups.results||[],assessments:history.results||[]})
 })
 api.post('/hcot/competency-assessments', async c => {
   const manager=await requireAssessmentManager(c)
