@@ -115,3 +115,10 @@ test('cadre rename and deletion require HCOT administrator and preserve referent
  assert.match(ui,/id="hcot-cadre-update"/);
  assert.match(ui,/id="hcot-cadre-delete"/);
 });
+
+test('cadre management and assignment selectors display names, not numeric identifiers',()=>{
+ assert.match(ui,/cadres\.map\(x=>'<option value="/);
+ assert.match(ui,/cadres\.filter\(x=>x\.active\)\.map\(x=>'<option value="/);
+ assert.doesNotMatch(ui,/options\(cadres\.map\(x=>String\(x\.id\)\),'Select cadre'\)/);
+ assert.doesNotMatch(ui,/options\(cadres\.filter\(x=>x\.active\)\.map\(x=>String\(x\.id\)\)/);
+});
