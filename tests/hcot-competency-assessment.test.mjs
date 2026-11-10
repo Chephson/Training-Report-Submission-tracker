@@ -217,7 +217,7 @@ test('admin-only evaluations report and requests stay separate from manager-scop
  assert.match(ui,/Competency assessment outcomes/);
  assert.match(ui,/Request line manager assessments/);
  assert.match(ui,/hcot\/line-manager\/assessment-requests/);
- assert.match(ui,/No email is sent/);
+ assert.match(ui,/attempts to email selected managers when email delivery is configured/);
 });
 
 test('HCOT admin targets assigned staff and records email outcomes without exposing mail secrets',()=>{
