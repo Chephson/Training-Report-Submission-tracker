@@ -152,7 +152,8 @@ test('line manager mapping and assessment security',()=>{
  assert.match(api,/api.post\('\/hcot\/line-manager\/assignments\/import'/);
  assert.match(api,/api.post\('\/hcot\/line-manager\/assignments'/);
  assert.match(api,/api.get\('\/hcot\/line-manager\/my-staff'/);
- assert.match(api,/HCOT administrators cannot access competency assessments/);
+ assert.doesNotMatch(api,/HCOT administrators cannot access competency assessments/);
+ assert.match(api,/isAssignedToManager\(c,staffId,manager.email!/);
  assert.match(api,/Staff member is not assigned to this line manager/);
  assert.match(ui,/data-section="line-managers"/);
  assert.match(ui,/hcot-line-manager-mapping-template.csv/);
@@ -166,4 +167,18 @@ test('manual line-manager mapping selects an active Staff Roster employee withou
  assert.match(ui,/staff_email,manager_email\\r\\n/);
  assert.match(ui,/hcot-line-manager-mapping-template\.csv/);
  assert.match(api,/api\.post\('\/hcot\/line-manager\/assignments\/import'/);
+});
+
+test('HCOT admins may assess only their roster-linked staff without changing CSV format',()=>{
+ const guard=api.slice(api.indexOf('async function requireAssessmentManager'),api.indexOf('async function isAssignedToManager'));
+ assert.match(guard,/verifyAccessJwt\(c.req.raw,c.env\)/);
+ assert.match(guard,/hcot_line_manager_assignments/);
+ assert.doesNotMatch(guard,/isHcotCompetencyAdmin/);
+ const manual=api.slice(api.indexOf("api.post('/hcot/line-manager/assignments'"),api.indexOf("api.delete('/hcot/line-manager/assignments"));
+ assert.doesNotMatch(manual,/HCOT administrators cannot be assigned as line managers/);
+ const bulk=api.slice(api.indexOf("api.post('/hcot/line-manager/assignments/import'"),api.indexOf("api.get('/hcot/competency-assessments'"));
+ assert.match(bulk,/staff_email,manager_email/);
+ assert.doesNotMatch(bulk,/admins.includes\(email\)/);
+ assert.match(ui,/data-section="assessments">My Staff Assessments/);
+ assert.match(api,/Staff member is not assigned to this line manager/);
 });
