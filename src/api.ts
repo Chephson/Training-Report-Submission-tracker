@@ -1371,7 +1371,7 @@ api.post('/hcot/evaluations/assessment-requests', async c=>{
 api.get('/hcot/line-manager/assessment-requests', async c=>{
   const manager=await requireAssessmentManager(c)
   if(manager.error)return c.json({error:manager.error},manager.status as 401|403)
-  const requests=await c.env.DB.prepare('SELECT r.id,r.cycle,r.requested_at,r.status, GROUP_CONCAT(s.full_name, ', ') AS staff_names FROM hcot_assessment_requests r LEFT JOIN hcot_assessment_request_staff t ON t.request_id=r.id LEFT JOIN staff s ON s.id=t.staff_id WHERE r.manager_email=? GROUP BY r.id ORDER BY requested_at DESC,id DESC LIMIT 100').bind(manager.email).all()
+  const requests=await c.env.DB.prepare('SELECT r.id,r.cycle,r.requested_at,r.status, GROUP_CONCAT(s.full_name, ', ') AS staff_names FROM hcot_assessment_requests r LEFT JOIN hcot_assessment_request_staff t ON t.request_id=r.id LEFT JOIN staff s ON s.id=t.staff_id WHERE r.manager_email=? GROUP BY r.id ORDER BY r.requested_at DESC,r.id DESC LIMIT 100').bind(manager.email).all()
   return c.json({requests:requests.results||[]})
 })
 api.get('/hcot/competency-assessments', async c => {
