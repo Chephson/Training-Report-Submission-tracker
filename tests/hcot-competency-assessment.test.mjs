@@ -226,12 +226,25 @@ test('HCOT admin targets assigned staff and records email outcomes without expos
  assert.match(block,/staff_ids\?:number\[\]/);
  assert.match(block,/Selected staff must belong to the selected line managers/);
  assert.match(block,/hcot_assessment_request_staff/);
- assert.match(block,/HCOT_RESEND_API_KEY/);
- assert.match(block,/HCOT_EMAIL_FROM/);
+ assert.match(block,/HCOT_POWER_AUTOMATE_URL/);
+ assert.match(block,/submitted_to_flow/);
  assert.match(block,/hcot_assessment_email_log/);
  assert.match(block,/email_status:status/);
  assert.match(ui,/id="hce-staff"/);
  assert.match(ui,/id="hce-managers"/);
  assert.match(ui,/const staff_ids=Array.from/);
  assert.match(ui,/email_status/);
+});
+
+test('Microsoft 365 flow URL remains server-side and is constrained to Microsoft HTTPS hosts',()=>{
+ assert.match(api,/HCOT_POWER_AUTOMATE_URL\?: string/);
+ assert.match(api,/url\.protocol!=='https:'/);
+ assert.match(api,/hostname\.endsWith\('\.logic\.azure\.com'\)/);
+ assert.match(api,/hostname\.endsWith\('\.api\.powerplatform\.com'\)/);
+ assert.match(api,/request_id:requestId/);
+ assert.match(api,/manager_email:email/);
+ assert.match(api,/staff:selected\.map/);
+ assert.match(api,/status='submitted_to_flow'/);
+ assert.doesNotMatch(ui,/HCOT_POWER_AUTOMATE_URL/);
+ assert.doesNotMatch(api,/api\.resend\.com\/emails/);
 });
