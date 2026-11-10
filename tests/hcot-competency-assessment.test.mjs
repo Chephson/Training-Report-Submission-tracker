@@ -80,7 +80,7 @@ test('bulk upload validates competency category and prevents duplicate competenc
 
 test('group-scoped competency inheritance is enforced consistently for reading and saving assessments',()=>{
  const get=api.slice(api.indexOf("api.get('/hcot/competency-assessments'"),api.indexOf("api.get('/hcot/effective-competencies'"));
- const post=api.slice(api.indexOf("api.post('/hcot/competency-assessments'"),api.indexOf("api.get('/hcot/competency-assessments'"));
+ const post=api.slice(api.indexOf("api.post('/hcot/competency-assessments'"),api.indexOf("api.post('/hcot/competency-assessments'")+3500);
  for(const section of [get,post]){
   assert.match(section,/hcot_group_competencies/);
   assert.match(section,/hcot_cadre_groups/);
