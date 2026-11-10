@@ -567,7 +567,8 @@ api.post('/staff/import', async (c) => {
       .run()
     if (res.meta.changes) added++
   }
-  await log(c.env.DB, 'staff.imported', `${added} rows from roster file`, 'admin')
+  await log(c.env.DB, 'staff.imported', `${added} rows from roster file; ${skipped} skipped`, 'admin')
+  if (added === 0 && skipped > 0) return c.json({ ok: false, error: `No staff imported. ${skipped} row(s) were rejected.`, count: 0, skipped, problems: problems.slice(0, 25) }, 422)
   return c.json({ ok: true, count: added, skipped, problems: problems.slice(0, 25) })
 })
 
