@@ -219,3 +219,19 @@ test('admin-only evaluations report and requests stay separate from manager-scop
  assert.match(ui,/hcot\/line-manager\/assessment-requests/);
  assert.match(ui,/No email is sent/);
 });
+
+test('HCOT admin targets assigned staff and records email outcomes without exposing mail secrets',()=>{
+ const block=api.slice(api.indexOf("api.get('/hcot/evaluations/manager-staff'"),api.indexOf("api.get('/hcot/line-manager/assessment-requests'"));
+ assert.match(block,/isHcotCompetencyAdmin\(c,session.email\)/);
+ assert.match(block,/staff_ids\?:number\[\]/);
+ assert.match(block,/Selected staff must belong to the selected line managers/);
+ assert.match(block,/hcot_assessment_request_staff/);
+ assert.match(block,/HCOT_RESEND_API_KEY/);
+ assert.match(block,/HCOT_EMAIL_FROM/);
+ assert.match(block,/hcot_assessment_email_log/);
+ assert.match(block,/email_status:status/);
+ assert.match(ui,/id="hce-staff"/);
+ assert.match(ui,/id="hce-managers"/);
+ assert.match(ui,/const staff_ids=Array.from/);
+ assert.match(ui,/email_status/);
+});
