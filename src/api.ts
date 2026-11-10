@@ -425,6 +425,32 @@ api.get('/hcot/preview-roster-reset/preflight', async c => {
     (SELECT COUNT(*) FROM hcot_reviews) AS hcot_reviews`).first()
   return c.json({ok:true,read_only:true,counts,required_before_reset:['Confirm exact Preview D1 database binding','Create and verify a restorable D1 backup','Export and retain existing Staff Roster','Review dependent-record counts and choose deletion scope','Obtain explicit confirmation before destructive operation'],message:'No data has been deleted. A roster reset is not enabled by this endpoint.'})
 })
+/* Destructive reset: disabled unless explicitly enabled in the isolated Preview environment.
+   A bookmark is a recovery reference, not a verified export; operators must independently
+   verify a restorable backup/export before enabling this route. */
+api.post('/hcot/preview-roster-reset/execute', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const hostname=new URL(c.req.url).hostname
+  if(!/^[a-f0-9]{8}\.training-report-submission-tracker\.pages\.dev$/.test(hostname))
+    return c.json({error:'Reset restricted to an immutable Preview deployment hostname.'},403)
+  const env=c.env as Env & {HCOT_PREVIEW_ROSTER_RESET_ENABLED?:string;HCOT_PREVIEW_D1_DATABASE_ID?:string}
+  if(env.HCOT_PREVIEW_ROSTER_RESET_ENABLED!=='true'||env.HCOT_PREVIEW_D1_DATABASE_ID!=='26b2a079-accf-4d05-bf1c-c1e8ca523e1e')
+    return c.json({error:'Preview reset disabled or Preview database identity not confirmed.'},403)
+  const b=await c.req.json<{confirmation?:string;backup_verified?:boolean;export_verified?:boolean;expected_staff_count?:number;expected_submissions_count?:number}>().catch(()=>({}))
+  if(b.confirmation!=='RESET 21 PREVIEW TEST STAFF' || b.backup_verified!==true || b.export_verified!==true || b.expected_staff_count!==21 || b.expected_submissions_count!==16)
+    return c.json({error:'Explicit reset confirmation, independently verified backup/export and expected record counts required.'},400)
+  const current=await c.env.DB.prepare('SELECT (SELECT COUNT(*) FROM staff) AS staff,(SELECT COUNT(*) FROM submissions) AS submissions').first<{staff:number;submissions:number}>()
+  if(current?.staff!==21||current?.submissions!==16)return c.json({error:'Roster or submission counts changed. Reset cancelled; repeat preflight.',current},409)
+  // D1 batch is transactional. Delete dependent rows before their referenced staff.
+  const tables=['hcot_cost_estimates','hcot_reviews','hcot_participants','hcot_competency_assessments','hcot_staff_competencies','hcot_staff_links','hcot_mapping_requests','programme_assignments','submissions']
+  const statements=tables.map(table=>c.env.DB.prepare('DELETE FROM '+table+' WHERE '+(table==='hcot_staff_links'?'tracker_staff_id':'staff_id')+' IN (SELECT id FROM staff)'))
+  statements.push(c.env.DB.prepare('DELETE FROM staff WHERE id IN (SELECT id FROM staff)'))
+  // The final insert belongs to the same transaction; a failed deletion rolls back all changes.
+  statements.push(c.env.DB.prepare('INSERT INTO activity(event,detail,actor) VALUES(?,?,?)').bind('hcot.preview_roster_reset',JSON.stringify({staff:21,submissions:16,scope:'staff_and_linked_records',preserved:['hcot_cadres','hcot_competencies','hcot_competency_groups','programmes','hcot_goals','organisational_directory']}),session.email))
+  await c.env.DB.batch(statements)
+  return c.json({ok:true,staff_deleted:21,submissions_deleted:16,preserved:['cadres','competency_library','programmes','organisational_directory','hcot_goals']})
+})
 api.get('/staff', async (c) => {
   const rows = await c.env.DB.prepare(
     'SELECT * FROM staff ORDER BY full_name COLLATE NOCASE'
