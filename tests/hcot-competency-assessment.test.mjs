@@ -256,3 +256,12 @@ test('Evaluations dropdown hides native arrow and selects entries by clicking ro
  assert.ok(ui.includes('class="hce-manager-choice"'));
  assert.ok(ui.includes('class="hce-staff-choice"'));
 });
+
+test('line manager assessment requests use unambiguous joined SQL ordering',()=>{
+ const start=api.indexOf("api.get('/hcot/line-manager/assessment-requests'");
+ const end=api.indexOf("api.get('/hcot/competency-assessments'",start);
+ const route=api.slice(start,end);
+ assert.ok(route.includes('GROUP BY r.id ORDER BY r.requested_at DESC,r.id DESC'));
+ assert.ok(route.includes('manager=await requireAssessmentManager(c)'));
+ assert.ok(route.includes('WHERE r.manager_email=?'));
+});
