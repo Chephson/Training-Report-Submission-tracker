@@ -265,3 +265,12 @@ test('line manager assessment requests use unambiguous joined SQL ordering',()=>
  assert.ok(route.includes('manager=await requireAssessmentManager(c)'));
  assert.ok(route.includes('WHERE r.manager_email=?'));
 });
+
+test('My Staff Assessments remains accessible when optional request inbox fails',()=>{
+ const start=ui.indexOf("section==='assessments'");
+ const end=ui.indexOf("section==='goals'",start);
+ const view=ui.slice(start,end<0?start+12000:end);
+ assert.ok(view.includes("api('/hcot/line-manager/my-staff')"));
+ assert.ok(view.includes("api('/hcot/line-manager/assessment-requests').catch("));
+ assert.ok(view.includes("return {requests:[]}"));
+});
