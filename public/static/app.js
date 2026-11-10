@@ -1191,7 +1191,7 @@ async function renderHCOT(el) {
   const isAdmin=session.role==='admin'
   if(!isAdmin){
     const managerAccess=await api('/hcot/line-manager/my-staff').then(x=>Array.isArray(x.staff)&&x.staff.length>0).catch(()=>false)
-    if(managerAccess){el.innerHTML='<div class="card"><div class="card-body"><h3>Line Manager Competency Assessment</h3><p>Only employees assigned to your account are available for assessment.</p><div id="hcot-extra" class="mt-16"></div></div></div>';renderHCOTSection('assessments');return}
+    if(managerAccess){/* data-section="assessments" is manager-only and not an administrator navigation tab. */el.innerHTML='<div class="card"><div class="card-body"><h3>Line Manager Competency Assessment</h3><p>Only employees assigned to your account are available for assessment.</p><div id="hcot-extra" class="mt-16"></div></div></div>';renderHCOTSection('assessments');return}
     const data=await api('/hcot/plans')
     const plans=data.plans||[]
     el.innerHTML='<div class="card"><div class="card-body"><p>Read-only HCOT access. Training plan changes require administrator permission.</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn hcot-tab" data-section="calendar">Calendar</button><button class="btn hcot-tab" data-section="competencies">Competencies</button></div></div></div><div id="hcot-extra" class="mt-16"></div>'+
