@@ -444,7 +444,7 @@ api.post('/hcot/preview-roster-reset/execute', async c => {
   if(current?.staff!==21||current?.submissions!==16)return c.json({error:'Roster or submission counts changed. Reset cancelled; repeat preflight.',current},409)
   // D1 batch is transactional. Delete dependent rows before their referenced staff.
   const tables=['hcot_cost_estimates','hcot_reviews','hcot_participants','hcot_competency_assessments','hcot_staff_competencies','hcot_staff_links','hcot_mapping_requests','programme_assignments','submissions']
-  const statements=tables.map(table=>c.env.DB.prepare('DELETE FROM '+table+' WHERE '+(table==='hcot_staff_links'?'tracker_staff_id':'staff_id')+' IN (SELECT id FROM staff)'))
+  const statements=tables.map(table=>c.env.DB.prepare('DELETE FROM '+table+' WHERE '+((table==='hcot_staff_links'||table==='hcot_mapping_requests')?'tracker_staff_id':'staff_id')+' IN (SELECT id FROM staff)'))
   statements.push(c.env.DB.prepare('DELETE FROM staff WHERE id IN (SELECT id FROM staff)'))
   // The final insert belongs to the same transaction; a failed deletion rolls back all changes.
   statements.push(c.env.DB.prepare('INSERT INTO activity(event,detail,actor) VALUES(?,?,?)').bind('hcot.preview_roster_reset',JSON.stringify({staff:21,submissions:16,scope:'staff_and_linked_records',preserved:['hcot_cadres','hcot_competencies','hcot_competency_groups','programmes','hcot_goals','organisational_directory']}),session.email))
