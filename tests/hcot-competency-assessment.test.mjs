@@ -193,3 +193,15 @@ test('staff competency group lookup uses roster search and cadre scope without c
  assert.match(ui,/sameScope\(x\.unit,person\.unit\)/);
  assert.match(ui,/const staffGroupLookup=isAdmin\?/);
 });
+
+test('assignee assessment dropdown loads real cadre-linked groups and selects first available group',()=>{
+ const route=api.slice(api.indexOf("api.get('/hcot/competency-assessments'"),api.indexOf("api.post('/hcot/competency-assessments'"));
+ assert.match(route,/isAssignedToManager\(c,staffId,manager.email!\)/);
+ assert.match(route,/hcot_cadre_groups/);
+ assert.match(route,/hcot_cadre_group_scopes/);
+ assert.match(route,/groups:linkedGroups.results\|\|\[\]/);
+ assert.match(ui,/const linkedGroups=data.groups\|\|\[\]/);
+ assert.match(ui,/const linkedIds=new Set/);
+ assert.match(ui,/visibleGroups.length\)\{\$\('#hca-group'\).value=visibleGroups\[0\].id/);
+ assert.doesNotMatch(ui,/const groupData=\{cadres:\[\]\}/);
+});
