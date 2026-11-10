@@ -1509,7 +1509,10 @@ David Okafor,david.okafor@example.org,Mathematics"></textarea>
         body: text,
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Import failed')
+      if (!res.ok) {
+        const details = Array.isArray(data.problems) ? data.problems.slice(0, 25).join('\\n') : ''
+        throw new Error((data.error || 'Import failed') + (details ? '\\n' + details : ''))
+      }
       const problems = Array.isArray(data.problems) ? data.problems : []
       const skipped = Number(data.skipped) || 0
       if (skipped || problems.length) {
