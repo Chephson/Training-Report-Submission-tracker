@@ -911,7 +911,7 @@ async function renderHCOTSection(section) {
     }else if(section==='assessments'){
       const roster=await api('/hcot/line-manager/my-staff')
       const staff=roster.staff||[]
-      const requestData=await api('/hcot/line-manager/assessment-requests')
+      const requestData=await api('/hcot/line-manager/assessment-requests').catch(err=>{console.warn('Assessment request inbox unavailable; assigned-staff assessments remain accessible:',err);return {requests:[]}})
       const pendingRequests=(requestData.requests||[]).filter(x=>x.status==='pending')
       const requestNotice=pendingRequests.length?'<div class="card mb-12"><div class="card-body"><h4>Assessment requests from HCOT</h4>'+pendingRequests.map(x=>'<p>Cycle: <strong>'+esc(x.cycle)+'</strong> — Staff: '+esc(x.staff_names||'All assigned staff')+' — Requested '+esc(x.requested_at)+'</p>').join('')+'</div></div>':''
       el.innerHTML=requestNotice+'<div class="card"><div class="card-head"><h3>Individual competency assessment</h3></div><div class="card-body"><p class="tiny muted">All distinct competencies mapped to the selected staff member (cadre-inherited and direct) are assessed separately on a 0–100 scale.</p><label class="field"><span>Staff member</span><select id="hca-staff"><option value="">Select staff</option>'+staff.map(x=>'<option value="'+x.id+'">'+esc(x.full_name)+' — '+esc(x.email)+'</option>').join('')+'</select></label><label class="field"><span>Assessment cycle</span><input id="hca-cycle" maxlength="80" placeholder="e.g. 2026 Annual"></label><label class="field"><span>Target score (0–100)</span><input id="hca-target" type="number" min="0" max="100" step="1" value="70"></label><div id="hca-detail"></div></div></div>'
