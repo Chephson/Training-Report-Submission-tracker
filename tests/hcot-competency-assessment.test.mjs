@@ -247,3 +247,12 @@ test('Evaluations manager and staff selectors are compact multi-select dropdowns
  assert.ok(!ui.includes('id="hce-managers" multiple size="6"'));
  assert.ok(!ui.includes('id="hce-staff" multiple size="7"'));
 });
+
+test('Evaluations dropdown hides native arrow and selects entries by clicking rows',()=>{
+ assert.ok(ui.includes('summary::-webkit-details-marker'));
+ assert.ok(ui.includes('list-style:none;display:block'));
+ assert.ok(ui.includes('class="hce-option"'));
+ assert.ok(ui.includes('.hce-option:has(input:checked)'));
+ assert.ok(ui.includes('class="hce-manager-choice"'));
+ assert.ok(ui.includes('class="hce-staff-choice"'));
+});
