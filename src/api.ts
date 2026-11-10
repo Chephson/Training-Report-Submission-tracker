@@ -1241,7 +1241,6 @@ api.post('/hcot/cadre-competencies/bulk', async c => {
 async function requireAssessmentManager(c:any){
   const session=await verifyAccessJwt(c.req.raw,c.env)
   if(!session)return {error:'Cloudflare Access authentication required.',status:401}
-  if(await isHcotCompetencyAdmin(c,session.email))return {error:'HCOT administrators cannot access competency assessments.',status:403}
   const email=session.email.trim().toLowerCase()
   const count=await c.env.DB.prepare('SELECT COUNT(*) AS n FROM hcot_line_manager_assignments a JOIN staff s ON s.id=a.staff_id WHERE a.manager_email=? AND s.active=1').bind(email).first<{n:number}>()
   if(!count||count.n<1)return {error:'No active staff are assigned to this line manager.',status:403}
@@ -1269,7 +1268,6 @@ api.post('/hcot/line-manager/assignments', async c=>{
   const b=await c.req.json<{staff_id?:number;manager_email?:string}>().catch(()=>({}))
   const staffId=Number(b.staff_id),email=String(b.manager_email||'').trim().toLowerCase()
   if(!Number.isSafeInteger(staffId)||staffId<1||!/^\S+@\S+\.\S+$/.test(email))return c.json({error:'Valid staff ID and manager email are required.'},400)
-  if(email===session.email.trim().toLowerCase() || (c.env.HCOT_SETTINGS_ADMIN_EMAILS||'').split(',').some((x:string)=>x.trim().toLowerCase()===email))return c.json({error:'HCOT administrators cannot be assigned as line managers.'},403)
   const staff=await c.env.DB.prepare('SELECT id,email,active FROM staff WHERE id=?').bind(staffId).first<{id:number;email:string;active:number}>()
   if(!staff||Number(staff.active)!==1)return c.json({error:'Select an active employee from the Staff Roster.'},400)
   if(staff.email.trim().toLowerCase()===email)return c.json({error:'Employees cannot assess themselves.'},400)
@@ -1297,10 +1295,9 @@ api.post('/hcot/line-manager/assignments/import', async c=>{
   if(staffIndex<0||managerIndex<0)return c.json({error:'Required CSV columns: staff_email,manager_email.'},400)
   if(!rows.length||rows.length>1000)return c.json({error:'Provide 1–1000 rows.'},400)
   const errors:string[]=[],prepared:{id:number;email:string}[]=[],seen=new Set<number>()
-  const admins=(c.env.HCOT_SETTINGS_ADMIN_EMAILS||'').split(',').map((x:string)=>x.trim().toLowerCase())
   for(const [index,row] of rows.entries()){
     const staffEmail=String(row[staffIndex]||'').trim().toLowerCase(),email=String(row[managerIndex]||'').trim().toLowerCase()
-    if(!/^\S+@\S+\.\S+$/.test(email)||admins.includes(email)||staffEmail===email){errors.push('Row '+(index+2)+': invalid manager, administrator, or self-assignment.');continue}
+    if(!/^\S+@\S+\.\S+$/.test(email)||staffEmail===email){errors.push('Row '+(index+2)+': invalid manager email or self-assignment.');continue}
     const matches=await c.env.DB.prepare('SELECT id FROM staff WHERE LOWER(TRIM(email))=? AND active=1').bind(staffEmail).all<{id:number}>()
     if(matches.results.length!==1){errors.push('Row '+(index+2)+': staff email must identify exactly one active roster record.');continue}
     const id=matches.results[0].id
