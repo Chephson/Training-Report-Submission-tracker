@@ -1322,7 +1322,7 @@ api.get('/hcot/evaluations/competency-report', async c=>{
       ORDER BY a.assessed_at DESC,a.id DESC LIMIT 5000`).all(),
     c.env.DB.prepare(`SELECT a.manager_email,COUNT(*) AS staff_count FROM hcot_line_manager_assignments a
       JOIN staff s ON s.id=a.staff_id WHERE s.active=1 GROUP BY a.manager_email ORDER BY a.manager_email`).all(),
-    c.env.DB.prepare('SELECT * FROM hcot_assessment_requests ORDER BY requested_at DESC,id DESC LIMIT 500').all()
+    c.env.DB.prepare(`SELECT r.*,GROUP_CONCAT(s.full_name, ', ') AS staff_names,e.status AS email_status FROM hcot_assessment_requests r LEFT JOIN hcot_assessment_request_staff t ON t.request_id=r.id LEFT JOIN staff s ON s.id=t.staff_id LEFT JOIN hcot_assessment_email_log e ON e.request_id=r.id GROUP BY r.id ORDER BY r.requested_at DESC,r.id DESC LIMIT 500`).all()
   ])
   return c.json({assessments:assessments.results||[],managers:managers.results||[],requests:requests.results||[]})
 })
