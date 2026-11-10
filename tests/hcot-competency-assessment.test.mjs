@@ -137,3 +137,11 @@ test('preview roster reset requires admin, preview hostname, environment gates, 
  assert.doesNotMatch(route,/DELETE FROM hcot_cadres/);
  assert.doesNotMatch(route,/DELETE FROM hcot_goals/);
 });
+
+test('staff CSV import reports rejected rows and does not silently succeed with zero imported',()=>{
+ const section=api.slice(api.indexOf("api.post('/staff/import'"),api.indexOf("/* ---------------- progress / dashboard"));
+ assert.match(section,/added === 0 && skipped > 0/);
+ assert.match(section,/problems: problems.slice\(0, 25\)/);
+ assert.match(section,/422/);
+ assert.match(ui,/data\.problems\.slice\(0, 25\)/);
+});
