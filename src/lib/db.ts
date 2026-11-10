@@ -149,6 +149,16 @@ const SCHEMA = [
      requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
      status TEXT NOT NULL DEFAULT 'pending',
      CHECK(status IN ('pending','completed')))`,
+  `CREATE TABLE IF NOT EXISTS hcot_assessment_request_staff (
+     request_id INTEGER NOT NULL REFERENCES hcot_assessment_requests(id),
+     staff_id INTEGER NOT NULL REFERENCES staff(id),
+     PRIMARY KEY(request_id,staff_id))`,
+  `CREATE TABLE IF NOT EXISTS hcot_assessment_email_log (
+     request_id INTEGER PRIMARY KEY REFERENCES hcot_assessment_requests(id),
+     status TEXT NOT NULL,
+     attempted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+     provider_reference TEXT,
+     error_message TEXT)`,
   `CREATE INDEX IF NOT EXISTS idx_hcot_assessment_requests_manager ON hcot_assessment_requests(manager_email,status)`,
   `CREATE TABLE IF NOT EXISTS hcot_goals (
      id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
