@@ -1359,7 +1359,7 @@ api.post('/hcot/evaluations/assessment-requests', async c=>{
     const selected=targets.filter(x=>x.manager_email.trim().toLowerCase()===email)
     if(!selected.length)continue
     const prior=pending.get(email)
-    if(prior){outcomes.push({manager_email:email,request_id:prior,email_status:'already_pending',staff_count:selected.length});continue}
+    if(prior&&!ids.length){outcomes.push({manager_email:email,request_id:prior,email_status:'already_pending',staff_count:selected.length});continue}
     const created=await c.env.DB.prepare('INSERT INTO hcot_assessment_requests(manager_email,cycle,requested_by) VALUES(?,?,?)').bind(email,cycle,session.email).run()
     const requestId=Number(created.meta.last_row_id)
     await c.env.DB.batch(selected.map(x=>c.env.DB.prepare('INSERT INTO hcot_assessment_request_staff(request_id,staff_id) VALUES(?,?)').bind(requestId,x.staff_id)))
