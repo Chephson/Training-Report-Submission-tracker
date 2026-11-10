@@ -213,7 +213,7 @@ test('admin-only evaluations report and requests stay separate from manager-scop
  assert.match(report,/hcot_competency_assessments/);
  assert.match(report,/hcot_line_manager_assignments/);
  assert.match(report,/hcot_assessment_requests/);
- assert.match(report,/eligible.has\(email\)/);
+ assert.match(report,/byManager.has\(email\)/);
  assert.match(ui,/Competency assessment outcomes/);
  assert.match(ui,/Request line manager assessments/);
  assert.match(ui,/hcot\/line-manager\/assessment-requests/);
