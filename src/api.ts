@@ -34,7 +34,7 @@ import { previewHandshake } from './lib/hcot-handshake'
 import { verifyAccessJwt } from './lib/hcot-access'
 import { isHcotViewerRead } from './lib/hcot-roles'
 
-export type Env = { DB: D1Database; HCOT_ACCESS_TEAM_DOMAIN?: string; HCOT_ACCESS_AUD?: string; HCOT_SETTINGS_ADMIN_EMAILS?: string; HCOT_RESEND_API_KEY?: string; HCOT_EMAIL_FROM?: string }
+export type Env = { DB: D1Database; HCOT_ACCESS_TEAM_DOMAIN?: string; HCOT_ACCESS_AUD?: string; HCOT_SETTINGS_ADMIN_EMAILS?: string }
 const api = new Hono<{ Bindings: Env }>()
 
 api.use('/*', cors({ origin: (origin, c) => { try { return new URL(origin).origin === new URL(c.req.url).origin ? origin : '' } catch { return '' } }, allowHeaders: ['Content-Type', 'X-Access-Code'] }))
@@ -1354,50 +1354,19 @@ api.post('/hcot/evaluations/assessment-requests', async c=>{
   if(ids.length&&targets.some(x=>!emails.includes(x.manager_email.trim().toLowerCase())))return c.json({error:'Selected staff must belong to the selected line managers.'},400)
   const existing=await c.env.DB.prepare('SELECT id,manager_email FROM hcot_assessment_requests WHERE cycle=? AND status=?').bind(cycle,'pending').all<{id:number;manager_email:string}>()
   const pending=new Map((existing.results||[]).map(x=>[x.manager_email.trim().toLowerCase(),x.id]))
-  const outcomes:{manager_email:string;request_id:number;email_status:string;staff_count:number}[]=[]
+  const outcomes:{manager_email:string;request_id:number;staff_count:number}[]=[]
   for(const email of emails){
     const selected=targets.filter(x=>x.manager_email.trim().toLowerCase()===email)
     if(!selected.length)continue
     const prior=pending.get(email)
-    if(prior&&!ids.length){outcomes.push({manager_email:email,request_id:prior,email_status:'already_pending',staff_count:selected.length});continue}
+    if(prior&&!ids.length){outcomes.push({manager_email:email,request_id:prior,staff_count:selected.length});continue}
     const created=await c.env.DB.prepare('INSERT INTO hcot_assessment_requests(manager_email,cycle,requested_by) VALUES(?,?,?)').bind(email,cycle,session.email).run()
     const requestId=Number(created.meta.last_row_id)
     await c.env.DB.batch(selected.map(x=>c.env.DB.prepare('INSERT INTO hcot_assessment_request_staff(request_id,staff_id) VALUES(?,?)').bind(requestId,x.staff_id)))
-    let status='not_configured',reference='',error=''
-    if(c.env.HCOT_RESEND_API_KEY?.trim()&&c.env.HCOT_EMAIL_FROM?.trim()){
-      try{
-        const response=await fetch('https://api.resend.com/emails',{
-          method:'POST',
-          headers:{
-            'Authorization':'Bearer '+c.env.HCOT_RESEND_API_KEY,
-            'Content-Type':'application/json',
-            'Idempotency-Key':'hcot-assessment-request-'+requestId
-          },
-          body:JSON.stringify({
-            from:c.env.HCOT_EMAIL_FROM,
-            to:[email],
-            subject:'HCOT competency assessment request — '+cycle,
-            text:[
-              'An approved HCOT administrator has requested competency assessments.',
-              'Assessment cycle: '+cycle,
-              'Staff requiring assessment:',
-              ...selected.map(x=>'- '+x.full_name),
-              '',
-              'Sign in to the HCOT Training Monitor and open My Staff Assessments to complete the assessments.'
-            ].join('\\n')
-          })
-        })
-        const result=await response.json().catch(()=>({})) as {id?:string}
-        if(response.ok&&result.id){status='accepted_by_provider';reference=result.id}
-        else{status='failed';error='Resend did not accept the notification (HTTP '+response.status+').'}
-      }catch{status='failed';error='Resend email service could not be reached.'}
-    }
-    await c.env.DB.prepare('INSERT INTO hcot_assessment_email_log(request_id,status,provider_reference,error_message) VALUES(?,?,?,?)').bind(requestId,status,reference,error).run()
-    outcomes.push({manager_email:email,request_id:requestId,email_status:status,staff_count:selected.length})
+    outcomes.push({manager_email:email,request_id:requestId,staff_count:selected.length})
   }
-  await log(c.env.DB,'hcot.assessment.requested',JSON.stringify({cycle,requests:outcomes.map(x=>({manager:x.manager_email,id:x.request_id,status:x.email_status}))}),session.email)
-  return c.json({ok:true,created:outcomes.filter(x=>x.email_status!=='already_pending').length,results:outcomes,
-    email_configured:!!(c.env.HCOT_RESEND_API_KEY?.trim()&&c.env.HCOT_EMAIL_FROM?.trim())})
+  await log(c.env.DB,'hcot.assessment.requested',JSON.stringify({cycle,requests:outcomes.map(x=>({manager:x.manager_email,id:x.request_id}))}),session.email)
+  return c.json({ok:true,created:outcomes.filter(x=>!pending.has(x.manager_email)||ids.length>0).length,results:outcomes})
 })
 api.get('/hcot/line-manager/assessment-requests', async c=>{
   const manager=await requireAssessmentManager(c)
