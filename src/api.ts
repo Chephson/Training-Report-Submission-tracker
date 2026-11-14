@@ -1521,6 +1521,121 @@ api.post('/hcot/goals', async c => {
     .bind(b.title.trim(),b.scope||'unit',b.owner_label?.trim()||null,b.target_date||null,b.measure?.trim()||null,b.target_value?.trim()||null).run()
   return c.json({ok:true,id:result.meta.last_row_id},201)
 })
+
+/* Performance Goals: suggestions are reviewable, and only approved matches enter the manager workflow. */
+const pgWords=(value:string)=>new Set(String(value||'').toLowerCase().replace(/[^a-z0-9 ]/g,' ').split(/\s+/).filter(w=>w.length>2&&!['the','and','for','with','from','that','this','within','each','goal','kpi','achieve','improve','ensure','target','staff','performance'].includes(w)))
+const pgRelated:Record<string,string[]>={
+  customer:['service','client','complaint','relationship','satisfaction','communication','empathy'],
+  complaint:['resolution','customer','service','communication','problem'],
+  report:['reporting','analysis','data','accuracy','writing'],
+  data:['analysis','analytics','reporting','accuracy','digital'],
+  safety:['risk','compliance','health','hse','incident'],
+  regulatory:['regulation','compliance','policy','legal'],
+  delivery:['project','planning','execution','management'],
+  budget:['finance','financial','cost','planning'],
+  team:['leadership','collaboration','communication'],
+  deadline:['time','planning','organisation','management']
+}
+function pgScore(kpi:string,competency:string){
+  const kw=pgWords(kpi),cw=pgWords(competency)
+  let score=0
+  for(const w of kw)for(const c of cw){
+    if(w===c)score+=4
+    else if(w.length>4&&c.length>4&&(w.startsWith(c)||c.startsWith(w)))score+=3
+    else if((pgRelated[w]||[]).includes(c)||(pgRelated[c]||[]).includes(w))score+=2
+  }
+  return score
+}
+async function pgEligible(db:D1Database,staffId:number){
+  const result=await db.prepare(`SELECT DISTINCT p.id,p.name FROM hcot_competencies p JOIN staff s ON s.id=? AND s.active=1
+    WHERE EXISTS(SELECT 1 FROM hcot_staff_competencies d WHERE d.staff_id=s.id AND d.competency_id=p.id)
+    OR EXISTS(SELECT 1 FROM hcot_cadre_competencies m WHERE m.cadre_id=s.cadre_id AND m.competency_id=p.id
+      AND (m.division IS NULL OR LOWER(TRIM(m.division))=LOWER(TRIM(COALESCE(s.team,''))))
+      AND (m.department IS NULL OR LOWER(TRIM(m.department))=LOWER(TRIM(COALESCE(s.role,''))))
+      AND (m.unit IS NULL OR LOWER(TRIM(m.unit))=LOWER(TRIM(COALESCE(s.unit,'')))))
+    OR EXISTS(SELECT 1 FROM hcot_group_competencies gc WHERE gc.competency_id=p.id AND (
+      EXISTS(SELECT 1 FROM hcot_cadre_groups cg WHERE cg.cadre_id=s.cadre_id AND cg.group_id=gc.group_id)
+      OR EXISTS(SELECT 1 FROM hcot_cadre_group_scopes gs WHERE gs.cadre_id=s.cadre_id AND gs.group_id=gc.group_id
+        AND (gs.division IS NULL OR LOWER(TRIM(gs.division))=LOWER(TRIM(COALESCE(s.team,''))))
+        AND (gs.department IS NULL OR LOWER(TRIM(gs.department))=LOWER(TRIM(COALESCE(s.role,''))))
+        AND (gs.unit IS NULL OR LOWER(TRIM(gs.unit))=LOWER(TRIM(COALESCE(s.unit,'')))))))`).bind(staffId).all<{id:number;name:string}>()
+  return result.results||[]
+}
+async function pgAdmin(c:any){
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return null
+  return session.email.trim().toLowerCase()
+}
+async function pgSuggest(db:D1Database,kpiId:number,staffId:number,title:string){
+  const eligible=await pgEligible(db,staffId)
+  const matches=eligible.map(p=>({id:p.id,score:pgScore(title,p.name)})).filter(p=>p.score>0).sort((a,b)=>b.score-a.score).slice(0,8)
+  if(matches.length)await db.batch(matches.map(m=>db.prepare("INSERT OR IGNORE INTO hcot_performance_kpi_competencies(kpi_id,competency_id,match_score) VALUES(?,?,?)").bind(kpiId,m.id,m.score)))
+  return matches.length
+}
+api.get('/hcot/performance-goals', async c=>{
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session)return c.json({error:'Authentication required.'},401)
+  const admin=await isHcotCompetencyAdmin(c,session.email)
+  const manager=session.email.trim().toLowerCase()
+  const staffId=Number(c.req.query('staff_id')||0)
+  if(!admin&&(!Number.isSafeInteger(staffId)||staffId<1||!(await isAssignedToManager(c,staffId,manager))))return c.json({error:'Staff not assigned to line manager.'},403)
+  const goals=await c.env.DB.prepare(`SELECT g.*,s.full_name,s.email AS staff_email FROM hcot_performance_goals g
+    JOIN staff s ON s.id=g.staff_id WHERE (?=1 OR g.staff_id=?) ORDER BY s.full_name,g.cycle,g.id`).bind(admin?1:0,staffId).all()
+  const kpis=await c.env.DB.prepare(`SELECT k.*,g.staff_id FROM hcot_performance_kpis k JOIN hcot_performance_goals g ON g.id=k.goal_id
+    WHERE (?=1 OR g.staff_id=?) ORDER BY k.id`).bind(admin?1:0,staffId).all()
+  const matches=await c.env.DB.prepare(`SELECT m.*,p.name AS competency_name FROM hcot_performance_kpi_competencies m
+    JOIN hcot_performance_kpis k ON k.id=m.kpi_id JOIN hcot_performance_goals g ON g.id=k.goal_id
+    JOIN hcot_competencies p ON p.id=m.competency_id WHERE (?=1 OR g.staff_id=?) ORDER BY m.match_score DESC,p.name`).bind(admin?1:0,staffId).all()
+  return c.json({goals:goals.results||[],kpis:kpis.results||[],matches:matches.results||[],admin})
+})
+api.post('/hcot/performance-goals/import', async c=>{
+  const actor=await pgAdmin(c)
+  if(!actor)return c.json({error:'HCOT administrator access required.'},403)
+  const body=await c.req.json<{rows?:Array<{staff_email?:string;goal_title?:string;kpi_title?:string;kpi_target?:string;target_date?:string;assessment_cycle?:string}>}>().catch(()=>({}))
+  const rows=body.rows
+  if(!Array.isArray(rows)||!rows.length||rows.length>300)return c.json({error:'Provide 1–300 KPI rows.'},400)
+  const roster=await c.env.DB.prepare('SELECT id,email FROM staff WHERE active=1').all<{id:number;email:string}>()
+  const staffByEmail=new Map((roster.results||[]).map(x=>[x.email.toLowerCase(),x.id]))
+  const parsed=[] as Array<{staffId:number;goal:string;kpi:string;target:string|null;date:string|null;cycle:string}>
+  const errors:string[]=[]
+  for(let i=0;i<rows.length;i++){
+    const r=rows[i]||{},staffId=staffByEmail.get(String(r.staff_email||'').trim().toLowerCase())
+    const goal=String(r.goal_title||'').trim(),kpi=String(r.kpi_title||'').trim(),cycle=String(r.assessment_cycle||'').trim()
+    const date=String(r.target_date||'').trim(),target=String(r.kpi_target||'').trim()
+    if(!staffId||!goal||!kpi||!cycle||goal.length>250||kpi.length>500||cycle.length>80||target.length>250||(date&&!/^\d{4}-\d{2}-\d{2}$/.test(date)))errors.push('Row '+(i+2)+': invalid staff, goal, KPI, cycle, length or date.')
+    else parsed.push({staffId,goal,kpi,target:target||null,date:date||null,cycle})
+  }
+  if(errors.length)return c.json({error:'Import rejected; no rows applied.',errors},400)
+  const statements=[]
+  for(const r of parsed){
+    statements.push(c.env.DB.prepare('INSERT INTO hcot_performance_goals(staff_id,title,cycle,target_date,created_by) VALUES(?,?,?,?,?) ON CONFLICT(staff_id,title,cycle) DO NOTHING').bind(r.staffId,r.goal,r.cycle,r.date,actor))
+    statements.push(c.env.DB.prepare(`INSERT INTO hcot_performance_kpis(goal_id,title,target_value)
+      SELECT id,?,? FROM hcot_performance_goals WHERE staff_id=? AND title=? AND cycle=?
+      ON CONFLICT(goal_id,title) DO NOTHING`).bind(r.kpi,r.target,r.staffId,r.goal,r.cycle))
+  }
+  await c.env.DB.batch(statements)
+  let suggested=0
+  for(const r of parsed){
+    const kpi=await c.env.DB.prepare(`SELECT k.id FROM hcot_performance_kpis k JOIN hcot_performance_goals g ON g.id=k.goal_id
+      WHERE g.staff_id=? AND g.title=? AND g.cycle=? AND k.title=?`).bind(r.staffId,r.goal,r.cycle,r.kpi).first<{id:number}>()
+    if(kpi)suggested+=await pgSuggest(c.env.DB,kpi.id,r.staffId,r.kpi+' '+r.goal)
+  }
+  return c.json({ok:true,rows:parsed.length,suggestions:suggested,review_required:true})
+})
+api.post('/hcot/performance-goals/review', async c=>{
+  const actor=await pgAdmin(c)
+  if(!actor)return c.json({error:'HCOT administrator access required.'},403)
+  const b=await c.req.json<{kpi_id?:number;competency_id?:number;status?:string}>().catch(()=>({}))
+  const kpiId=Number(b.kpi_id),compId=Number(b.competency_id)
+  if(!Number.isSafeInteger(kpiId)||kpiId<1||!Number.isSafeInteger(compId)||compId<1||!['approved','rejected'].includes(String(b.status)))return c.json({error:'Invalid review.'},400)
+  const kpi=await c.env.DB.prepare(`SELECT g.staff_id FROM hcot_performance_kpis k JOIN hcot_performance_goals g ON g.id=k.goal_id WHERE k.id=?`).bind(kpiId).first<{staff_id:number}>()
+  if(!kpi)return c.json({error:'KPI not found.'},404)
+  const eligible=await pgEligible(c.env.DB,kpi.staff_id)
+  if(!eligible.some(x=>x.id===compId))return c.json({error:'Competency is not mapped to this staff.'},409)
+  await c.env.DB.prepare(`INSERT INTO hcot_performance_kpi_competencies(kpi_id,competency_id,status,reviewed_by,reviewed_at)
+    VALUES(?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(kpi_id,competency_id) DO UPDATE SET status=excluded.status,reviewed_by=excluded.reviewed_by,reviewed_at=CURRENT_TIMESTAMP`).bind(kpiId,compId,b.status,actor).run()
+  return c.json({ok:true})
+})
 api.get('/hcot/calendar', async c => {
   const year=(c.req.query('year')||String(new Date().getUTCFullYear())).trim()
   if(!/^\d{4}$/.test(year))return c.json({error:'Invalid year.'},400)
