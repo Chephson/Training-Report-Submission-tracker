@@ -1634,6 +1634,13 @@ api.post('/hcot/performance-goals/import', async c=>{
   }
   return c.json({ok:true,rows:parsed.length,suggestions:suggested,review_required:true})
 })
+api.get('/hcot/performance-goals/eligible', async c=>{
+  const actor=await pgAdmin(c)
+  if(!actor)return c.json({error:'HCOT administrator access required.'},403)
+  const staffId=Number(c.req.query('staff_id'))
+  if(!Number.isSafeInteger(staffId)||staffId<1)return c.json({error:'Select staff.'},400)
+  return c.json({competencies:await pgEligible(c.env.DB,staffId)})
+})
 api.post('/hcot/performance-goals/review', async c=>{
   const actor=await pgAdmin(c)
   if(!actor)return c.json({error:'HCOT administrator access required.'},403)
