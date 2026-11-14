@@ -930,8 +930,8 @@ async function renderHCOTSection(section) {
           const history=data.assessments||[]
           const groupScores=(data.group_scores||[]).filter(g=>g.cycle===$('#hca-cycle').value.trim())
           const groupScoreHtml='<div class="card mt-16"><div class="card-head"><h4>Competency group performance — '+esc($('#hca-cycle').value.trim()||'Select cycle')+'</h4></div><div class="card-body">'+
-            (groupScores.length?'<div class="table-wrap"><table><thead><tr><th>Competency group</th><th>Sum of scores</th><th>Group average</th><th>Assessed / mapped</th><th>Coverage</th></tr></thead><tbody>'+
-            groupScores.map(g=>'<tr><td>'+esc(g.group_name)+'</td><td>'+g.score_sum+'</td><td>'+(g.average_score===null?'Not assessed':g.average_score.toFixed(2)+'%')+'</td><td>'+g.assessed_competencies+' / '+g.total_competencies+'</td><td>'+(g.complete?'Complete':'Partial')+'</td></tr>').join('')+'</tbody></table></div>':'<p class="muted">No scores recorded for this assessment cycle yet.</p>')+
+            (groupScores.length?'<div class="table-wrap"><table><thead><tr><th>Competency group</th><th>Group average</th><th>Assessed / mapped</th><th>Coverage</th></tr></thead><tbody>'+
+            groupScores.map(g=>'<tr><td>'+esc(g.group_name)+'</td><td>'+(g.average_score===null?'Not assessed':g.average_score.toFixed(2)+'%')+'</td><td>'+g.assessed_competencies+' / '+g.total_competencies+'</td><td>'+(g.complete?'Complete':'Partial')+'</td></tr>').join('')+'</tbody></table></div>':'<p class="muted">No scores recorded for this assessment cycle yet.</p>')+
             '<p class="tiny muted">Each group average uses the latest recorded score for each competency in this cycle. Unassessed competencies are excluded from the average and counted in coverage.</p></div></div>'
           const linkedGroups=data.groups||[]
           const linkedIds=new Set(linkedGroups.map(g=>String(g.id)))
