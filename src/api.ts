@@ -1641,6 +1641,43 @@ api.get('/hcot/performance-goals/eligible', async c=>{
   if(!Number.isSafeInteger(staffId)||staffId<1)return c.json({error:'Select staff.'},400)
   return c.json({competencies:await pgEligible(c.env.DB,staffId)})
 })
+api.patch('/hcot/performance-goals/goal/:id', async c=>{
+  const actor=await pgAdmin(c)
+  if(!actor)return c.json({error:'HCOT administrator access required.'},403)
+  const id=Number(c.req.param('id'))
+  const b=await c.req.json<{title?:string;cycle?:string;target_date?:string|null}>().catch(()=>({}))
+  const title=String(b.title||'').trim(),cycle=String(b.cycle||'').trim(),date=String(b.target_date||'').trim()
+  if(!Number.isSafeInteger(id)||id<1||!title||!cycle||title.length>250||cycle.length>80||(date&&!/^\d{4}-\d{2}-\d{2}$/.test(date)))return c.json({error:'Invalid goal details.'},400)
+  const existing=await c.env.DB.prepare('SELECT id,staff_id,cycle FROM hcot_performance_goals WHERE id=?').bind(id).first<{id:number;staff_id:number;cycle:string}>()
+  if(!existing)return c.json({error:'Goal not found.'},404)
+  if(existing.cycle!==cycle){
+    const history=await c.env.DB.prepare('SELECT COUNT(*) AS n FROM hcot_competency_assessments WHERE staff_id=? AND cycle=?').bind(existing.staff_id,existing.cycle).first<{n:number}>()
+    if((history?.n||0)>0)return c.json({error:'Assessment history exists for this cycle. Keep the cycle unchanged to preserve assessment links.'},409)
+  }
+  const duplicate=await c.env.DB.prepare('SELECT id FROM hcot_performance_goals WHERE staff_id=? AND title=? AND cycle=? AND id<>?').bind(existing.staff_id,title,cycle,id).first()
+  if(duplicate)return c.json({error:'Another goal already uses this title and cycle for the staff member.'},409)
+  await c.env.DB.prepare('UPDATE hcot_performance_goals SET title=?,cycle=?,target_date=? WHERE id=?').bind(title,cycle,date||null,id).run()
+  return c.json({ok:true})
+})
+api.patch('/hcot/performance-goals/kpi/:id', async c=>{
+  const actor=await pgAdmin(c)
+  if(!actor)return c.json({error:'HCOT administrator access required.'},403)
+  const id=Number(c.req.param('id'))
+  const b=await c.req.json<{title?:string;target_value?:string|null}>().catch(()=>({}))
+  const title=String(b.title||'').trim(),target=String(b.target_value||'').trim()
+  if(!Number.isSafeInteger(id)||id<1||!title||title.length>500||target.length>250)return c.json({error:'Invalid KPI details.'},400)
+  const existing=await c.env.DB.prepare('SELECT id,goal_id,title FROM hcot_performance_kpis WHERE id=?').bind(id).first<{id:number;goal_id:number;title:string}>()
+  if(!existing)return c.json({error:'KPI not found.'},404)
+  const duplicate=await c.env.DB.prepare('SELECT id FROM hcot_performance_kpis WHERE goal_id=? AND title=? AND id<>?').bind(existing.goal_id,title,id).first()
+  if(duplicate)return c.json({error:'Another KPI under this goal already has this title.'},409)
+  await c.env.DB.prepare('UPDATE hcot_performance_kpis SET title=?,target_value=? WHERE id=?').bind(title,target||null,id).run()
+  if(existing.title!==title){
+    await c.env.DB.prepare("UPDATE hcot_performance_kpi_competencies SET status='suggested',reviewed_by=NULL,reviewed_at=NULL WHERE kpi_id=? AND status='approved'").bind(id).run()
+    const staff=await c.env.DB.prepare('SELECT staff_id FROM hcot_performance_goals WHERE id=?').bind(existing.goal_id).first<{staff_id:number}>()
+    if(staff)await pgSuggest(c.env.DB,id,staff.staff_id,title)
+  }
+  return c.json({ok:true,review_required:existing.title!==title})
+})
 api.post('/hcot/performance-goals/review', async c=>{
   const actor=await pgAdmin(c)
   if(!actor)return c.json({error:'HCOT administrator access required.'},403)
