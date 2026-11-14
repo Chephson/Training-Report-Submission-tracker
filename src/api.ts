@@ -1464,7 +1464,7 @@ api.post('/hcot/competency-assessments', async c => {
     if(!approved)return c.json({error:'Competency is not approved for the staff performance goals in this assessment cycle.'},409)
   }
   const result=await c.env.DB.prepare(`INSERT INTO hcot_competency_assessments(staff_id,competency_id,cycle,score,target_score,assessor_email,notes)
-    VALUES(?,?,?,?,?,?,?)`).bind(staffId,competencyId,cycle,score,target,session.email,notes||null).run()
+    VALUES(?,?,?,?,?,?,?)`).bind(staffId,competencyId,cycle,score,target,manager.email,notes||null).run()
   return c.json({ok:true,id:result.meta.last_row_id},201)
 })
 
