@@ -1170,7 +1170,7 @@ async function renderHCOTSection(section) {
         }catch(e){toast(e.message,true)}})
       }
     }else if(section==='goals'){
-      const [data,roster]=await Promise.all([api('/hcot/performance-goals'),api('/staff')])
+      const [data,roster,legacy]=await Promise.all([api('/hcot/performance-goals'),api('/staff'),api('/hcot/goals')])
       const staff=(roster.staff||[]).filter(x=>Number(x.active)===1)
       const goals=data.goals||[],kpis=data.kpis||[],matches=data.matches||[]
       const template='staff_email,goal_title,kpi_title,kpi_target,target_date,assessment_cycle\n'
@@ -1184,7 +1184,8 @@ async function renderHCOTSection(section) {
       }).join('')
       el.innerHTML='<div class="card"><div class="card-head"><h3>Performance Goals</h3></div><div class="card-body"><p class="tiny muted">Each goal contains its own KPIs. Suggested competencies come exclusively from the staff member’s existing mappings and require HCOT approval before being used for assessment.</p>'+
         (data.admin?'<label class="field"><span>Staff member</span><select id="pg-staff">'+staff.map(x=>'<option value="'+esc(x.email)+'">'+esc(x.full_name)+' — '+esc(x.email)+'</option>').join('')+'</select></label><label class="field"><span>Performance goal</span><input id="pg-goal" maxlength="250" placeholder="Goal title"></label><label class="field"><span>KPI under this goal</span><input id="pg-kpi" maxlength="500" placeholder="Specific measurable KPI"></label><label class="field"><span>KPI target</span><input id="pg-target" maxlength="250"></label><label class="field"><span>Assessment cycle</span><input id="pg-cycle" maxlength="80" placeholder="2026 Annual"></label><label class="field"><span>Target date</span><input id="pg-date" type="date"></label><button class="btn btn-primary" id="pg-add">Add goal / KPI</button><div class="mt-16"><h4>Bulk upload goals and KPIs</h4><p class="tiny muted">CSV UTF-8 with one KPI per row. Reuse the same goal title for multiple KPIs. Invalid imports are rejected before any records are applied.</p><button class="btn" id="pg-template">Download CSV template</button><input type="file" id="pg-file" accept=".csv,text/csv"><button class="btn btn-primary" id="pg-import">Import CSV</button></div>':'')+'</div></div>'+
-        '<div class="mt-16"><h3>Goals and KPIs by staff</h3>'+(list||'<p class="muted">No performance goals assigned yet.</p>')+'</div>'
+        '<div class="mt-16"><h3>Goals and KPIs by staff</h3>'+(list||'<p class="muted">No performance goals assigned yet.</p>')+'</div>'+
+        ((legacy.goals||[]).length?'<div class="card mt-16"><div class="card-head"><h3>Previous development goals (preserved, read-only)</h3></div><div class="card-body">'+legacy.goals.map(x=>'<p>'+esc(x.title)+' · '+esc(x.measure||'No KPI')+' · '+esc(x.owner_label||'Unassigned')+'</p>').join('')+'</div></div>':'')
       if(data.admin){
         $('#pg-add').onclick=async()=>{
           try{
