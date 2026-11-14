@@ -1422,7 +1422,12 @@ api.get('/hcot/competency-assessments', async c => {
   const history=await c.env.DB.prepare(`SELECT a.*,p.name AS competency_name,p.category FROM hcot_competency_assessments a
     JOIN hcot_competencies p ON p.id=a.competency_id WHERE a.staff_id=?
     ORDER BY a.assessed_at DESC,a.id DESC LIMIT 500`).bind(staffId).all()
-  return c.json({staff,competencies:eligible.results||[],groups:linkedGroups.results||[],assessments:history.results||[]})
+  const pgMatches=await c.env.DB.prepare(`SELECT DISTINCT m.competency_id,p.name AS competency_name,k.title AS kpi_title,g.title AS goal_title,g.cycle
+    FROM hcot_performance_kpi_competencies m JOIN hcot_performance_kpis k ON k.id=m.kpi_id
+    JOIN hcot_performance_goals g ON g.id=k.goal_id JOIN hcot_competencies p ON p.id=m.competency_id
+    WHERE g.staff_id=? AND m.status='approved' ORDER BY g.cycle,g.title,k.title`).bind(staffId).all()
+  const pgCount=await c.env.DB.prepare('SELECT COUNT(*) AS n FROM hcot_performance_goals WHERE staff_id=?').bind(staffId).first<{n:number}>()
+  return c.json({staff,competencies:eligible.results||[],groups:linkedGroups.results||[],assessments:history.results||[],performance_matches:pgMatches.results||[],performance_goals_assigned:(pgCount?.n||0)>0})
 })
 api.post('/hcot/competency-assessments', async c => {
   const manager=await requireAssessmentManager(c)
@@ -1451,6 +1456,13 @@ api.post('/hcot/competency-assessments', async c => {
         ))
     ) LIMIT 1`).bind(staffId,competencyId,competencyId,competencyId).first()
   if(!eligible)return c.json({error:'Competency is not currently mapped to this staff member.'},409)
+  const goalCount=await c.env.DB.prepare('SELECT COUNT(*) AS n FROM hcot_performance_goals WHERE staff_id=? AND cycle=?').bind(staffId,cycle).first<{n:number}>()
+  if((goalCount?.n||0)>0){
+    const approved=await c.env.DB.prepare(`SELECT 1 AS ok FROM hcot_performance_kpi_competencies m
+      JOIN hcot_performance_kpis k ON k.id=m.kpi_id JOIN hcot_performance_goals g ON g.id=k.goal_id
+      WHERE g.staff_id=? AND g.cycle=? AND m.competency_id=? AND m.status='approved' LIMIT 1`).bind(staffId,cycle,competencyId).first()
+    if(!approved)return c.json({error:'Competency is not approved for the staff performance goals in this assessment cycle.'},409)
+  }
   const result=await c.env.DB.prepare(`INSERT INTO hcot_competency_assessments(staff_id,competency_id,cycle,score,target_score,assessor_email,notes)
     VALUES(?,?,?,?,?,?,?)`).bind(staffId,competencyId,cycle,score,target,session.email,notes||null).run()
   return c.json({ok:true,id:result.meta.last_row_id},201)
