@@ -1,0 +1,81 @@
+name: Controlled HCOT competency assessment Preview
+
+on:
+  push:
+    branches:
+      - feature/hcot-competency-assessment
+    paths:
+      - .github/workflows/hcot-competency-assessment-preview.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hcot-preview-controlled
+  cancel-in-progress: false
+
+jobs:
+  deploy-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate fixed Preview target
+        env:
+          PROJECT_NAME: ${{ vars.CLOUDFLARE_PAGES_PROJECT_NAME }}
+          ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$PROJECT_NAME" = "training-report-submission-tracker"
+          test -n "$ACCOUNT_ID"
+          test -n "$API_TOKEN"
+          echo "Only the fixed HCOT Preview branch and approved commit will be deployed."
+
+      - name: Checkout approved HCOT feature commit (never main)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: 9da5dbef6712acf445ee8d19e9f48325964a3ec8
+          persist-credentials: false
+
+      - name: Verify approved source and Cloudflare production branch
+        env:
+          PROJECT_NAME: ${{ vars.CLOUDFLARE_PAGES_PROJECT_NAME }}
+          ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "9da5dbef6712acf445ee8d19e9f48325964a3ec8"
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/pages/projects/$PROJECT_NAME" > /tmp/hcot-pages-project.json
+          jq -e '.success == true and .result.production_branch == "main"' /tmp/hcot-pages-project.json >/dev/null || {
+            echo "Cloudflare Pages production branch does not match expected main. Aborting."
+            exit 1
+          }
+          # The Preview D1 binding must be present and match the known isolated database.
+          jq -e --arg db "26b2a079-accf-4d05-bf1c-c1e8ca523e1e" '
+            .result.deployment_configs.preview.d1_databases.DB as $binding |
+            ($binding != null) and
+            (($binding.id // $binding.database_id // "") == $db)
+          ' /tmp/hcot-pages-project.json >/dev/null || {
+            echo "Preview D1 binding cannot be verified as report-tracker-hcot-preview. Aborting."
+            exit 1
+          }
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies and build
+        run: |
+          npm ci
+          npm run build
+          node --test tests/hcot-settings-bootstrap.test.mjs
+
+      - name: Deploy approved commit to HCOT Preview only
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT_NAME: ${{ vars.CLOUDFLARE_PAGES_PROJECT_NAME }}
+        run: npx wrangler pages deploy dist --project-name "$PROJECT_NAME" --branch feature/hcot-competency-assessment
