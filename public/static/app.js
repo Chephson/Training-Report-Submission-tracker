@@ -921,7 +921,11 @@ async function renderHCOTSection(section) {
         try{
           const data=await api('/hcot/competency-assessments?staff_id='+id)
           const approvedMatches=data.performance_matches||[]
-          const approvedIds=new Set(approvedMatches.map(m=>Number(m.competency_id)))
+          const cycles=[...new Set(approvedMatches.map(m=>m.cycle))]
+          const chosenCycle=$('#hca-cycle').value.trim()
+          if(cycles.length===1&&!chosenCycle)$('#hca-cycle').value=cycles[0]
+          const activeCycle=$('#hca-cycle').value.trim()
+          const approvedIds=new Set(approvedMatches.filter(m=>m.cycle===activeCycle).map(m=>Number(m.competency_id)))
           const comps=data.performance_goals_assigned?(data.competencies||[]).filter(x=>approvedIds.has(Number(x.id))):(data.competencies||[])
           const history=data.assessments||[]
           const linkedGroups=data.groups||[]
@@ -931,7 +935,7 @@ async function renderHCOTSection(section) {
           if(comps.some(x=>groupFor(x)==='other'))visibleGroups.push({id:'other',name:'Other mapped competencies'})
 
 
-          const performanceNotice=data.performance_goals_assigned?'<div class="notice notice-info"><div><strong>Performance Goals competency alignment</strong>'+ (approvedMatches.length?approvedMatches.map(m=>'<p>'+esc(m.cycle)+' · '+esc(m.goal_title)+' → '+esc(m.kpi_title)+' → '+esc(m.competency_name)+'</p>').join(''):'<p>No approved KPI-to-competency matches yet. HCOT must review the suggested competencies before assessment.</p>')+'</div></div>':''
+          const performanceNotice=data.performance_goals_assigned?'<div class="notice notice-info"><div><strong>Performance Goals competency alignment</strong><p>Use the exact approved Performance Goals assessment cycle. Available cycles: '+esc(cycles.join(', ')||'none approved')+'.</p>'+ (approvedMatches.length?approvedMatches.map(m=>'<p>'+esc(m.cycle)+' · '+esc(m.goal_title)+' → '+esc(m.kpi_title)+' → '+esc(m.competency_name)+'</p>').join(''):'<p>No approved KPI-to-competency matches yet. HCOT must review the suggested competencies before assessment.</p>')+'</div></div>':''
           detail.innerHTML=performanceNotice+'<h4>Step 1: Select a competency group</h4><label class="field"><span>Cadre-linked competency group</span><select id="hca-group"><option value="">Select competency group</option>'+visibleGroups.map(g=>'<option value="'+esc(g.id)+'">'+esc(g.name)+' ('+comps.filter(x=>(groupFor(x))===g.id).length+')</option>').join('')+'</select></label><div id="hca-group-items" style="display:none"><h4>Step 2: Assess individual competencies ('+comps.length+' total)</h4>'+
             (comps.length?comps.map(x=>'<div class="card mt-16 hca-competency" data-group="'+(groupFor(x))+'"><div class="card-body"><strong>'+esc(x.name)+'</strong> <span class="tiny muted">('+esc(x.category)+')</span> <span class="tiny muted">'+(x.inherited&&x.direct?'Cadre + direct':x.inherited?'Cadre-inherited':'Direct assignment')+'</span><label class="field"><span>Score (0–100)</span><input type="number" min="0" max="100" step="1" class="hca-score" data-id="'+x.id+'"></label><label class="field"><span>Assessment notes</span><textarea class="hca-notes" data-id="'+x.id+'"></textarea><button class="btn btn-primary hca-save" data-id="'+x.id+'">Record assessment</button></div></div>').join(''):'<p>No competencies are currently mapped to this staff member. Add cadre-based or direct mappings in the Competencies tab first.</p>')+'</div>'+
             '<h4 class="mt-16">Assessment history</h4><div class="table-wrap"><table><thead><tr><th>Cycle</th><th>Competency</th><th>Score</th><th>Target</th><th>Gap</th><th>Assessor</th><th>Date</th></tr></thead><tbody>'+
@@ -944,7 +948,8 @@ async function renderHCOTSection(section) {
             $$('.hca-competency').forEach(card=>{card.style.display=card.dataset.group===selected?'block':'none'})
           }
           $('#hca-group').onchange()
-          $$('.hca-save').forEach(btn=>btn.onclick=async()=>{
+          $('#hca-cycle').onchange=()=>$('#hca-staff').onchange()
+          $('.hca-save').forEach(btn=>btn.onclick=async()=>{
             const competencyId=Number(btn.dataset.id),input=$('.hca-score[data-id="'+competencyId+'"]'),notes=$('.hca-notes[data-id="'+competencyId+'"]')
             const score=Number(input.value),target=Number($('#hca-target').value),cycle=$('#hca-cycle').value.trim()
             if(!input.value||!Number.isInteger(score)||score<0||score>100||!Number.isInteger(target)||target<0||target>100||!cycle){toast('Enter an assessment cycle and valid whole-number score and target (0–100).',true);return}
