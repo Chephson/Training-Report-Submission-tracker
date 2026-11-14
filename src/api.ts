@@ -1427,7 +1427,38 @@ api.get('/hcot/competency-assessments', async c => {
     JOIN hcot_performance_goals g ON g.id=k.goal_id JOIN hcot_competencies p ON p.id=m.competency_id
     WHERE g.staff_id=? AND m.status='approved' ORDER BY g.cycle,g.title,k.title`).bind(staffId).all()
   const pgCount=await c.env.DB.prepare('SELECT COUNT(*) AS n FROM hcot_performance_goals WHERE staff_id=?').bind(staffId).first<{n:number}>()
-  return c.json({staff,competencies:eligible.results||[],groups:linkedGroups.results||[],assessments:history.results||[],performance_matches:pgMatches.results||[],performance_goals_assigned:(pgCount?.n||0)>0})
+  // One most recent assessment per competency and cycle; repeated submissions never inflate averages.
+  const latestByCycle=new Map<string,Map<number,{score:number;target:number}>>()
+  for(const a of (history.results||[]) as Array<{competency_id:number;cycle:string;score:number;target_score:number}>){
+    if(!latestByCycle.has(a.cycle))latestByCycle.set(a.cycle,new Map())
+    const entries=latestByCycle.get(a.cycle)!
+    if(!entries.has(a.competency_id))entries.set(a.competency_id,{score:a.score,target:a.target_score})
+  }
+  const mapped=(eligible.results||[]) as Array<{id:number;group_id:number|null;name:string}>
+  const groupNames=new Map<number,string>(((linkedGroups.results||[]) as Array<{id:number;name:string}>).map(g=>[g.id,g.name]))
+  const groupMembers=new Map<number,Set<number>>()
+  for(const comp of mapped){
+    const groupId=comp.group_id==null||!groupNames.has(comp.group_id)?0:Number(comp.group_id)
+    if(!groupMembers.has(groupId))groupMembers.set(groupId,new Set())
+    groupMembers.get(groupId)!.add(Number(comp.id))
+  }
+  const groupScores:Array<{cycle:string;group_id:number;group_name:string;total_competencies:number;assessed_competencies:number;score_sum:number;average_score:number|null;average_target:number|null;complete:boolean}>=[]
+  for(const [cycle,scores] of latestByCycle){
+    const approved=new Set(((pgMatches.results||[]) as Array<{cycle:string;competency_id:number}>).filter(m=>m.cycle===cycle).map(m=>Number(m.competency_id)))
+    const hasGoals=await c.env.DB.prepare('SELECT 1 FROM hcot_performance_goals WHERE staff_id=? AND cycle=? LIMIT 1').bind(staffId,cycle).first()
+    for(const [groupId,members] of groupMembers){
+      const relevant=[...members].filter(id=>!hasGoals||approved.has(id))
+      if(!relevant.length)continue
+      const values=relevant.map(id=>scores.get(id)).filter((x):x is {score:number;target:number}=>Boolean(x))
+      const sum=values.reduce((n,x)=>n+x.score,0)
+      groupScores.push({cycle,group_id:groupId,group_name:groupNames.get(groupId)||'Other mapped competencies',
+        total_competencies:relevant.length,assessed_competencies:values.length,score_sum:sum,
+        average_score:values.length?Math.round(sum/values.length*100)/100:null,
+        average_target:values.length?Math.round(values.reduce((n,x)=>n+x.target,0)/values.length*100)/100:null,
+        complete:values.length===relevant.length})
+    }
+  }
+  return c.json({staff,competencies:eligible.results||[],groups:linkedGroups.results||[],assessments:history.results||[],group_scores:groupScores,performance_matches:pgMatches.results||[],performance_goals_assigned:(pgCount?.n||0)>0})
 })
 api.post('/hcot/competency-assessments', async c => {
   const manager=await requireAssessmentManager(c)
