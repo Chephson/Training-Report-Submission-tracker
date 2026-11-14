@@ -1187,7 +1187,7 @@ async function renderHCOTSection(section) {
         '<div class="mt-16"><h3>Goals and KPIs by staff</h3>'+(list||'<p class="muted">No performance goals assigned yet.</p>')+'</div>'+
         ((legacy.goals||[]).length?'<div class="card mt-16"><div class="card-head"><h3>Previous development goals (preserved, read-only)</h3></div><div class="card-body">'+legacy.goals.map(x=>'<p>'+esc(x.title)+' · '+esc(x.measure||'No KPI')+' · '+esc(x.owner_label||'Unassigned')+'</p>').join('')+'</div></div>':'')
       if(data.admin){
-        $('.pg-staff').forEach(select=>select.setAttribute('aria-label','Select staff member for performance goal'))
+        $$('.pg-staff').forEach(select=>select.setAttribute('aria-label','Select staff member for performance goal'))
         $('#pg-add').onclick=async()=>{
           try{
             const row={staff_email:$('#pg-staff').value,goal_title:$('#pg-goal').value,kpi_title:$('#pg-kpi').value,kpi_target:$('#pg-target').value,assessment_cycle:$('#pg-cycle').value,target_date:$('#pg-date').value}
