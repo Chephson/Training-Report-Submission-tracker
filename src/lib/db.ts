@@ -166,6 +166,22 @@ const SCHEMA = [
      target_date TEXT, measure TEXT, target_value TEXT,
      status TEXT NOT NULL DEFAULT 'draft',
      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS hcot_performance_goals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL REFERENCES staff(id),
+    title TEXT NOT NULL, cycle TEXT NOT NULL, target_date TEXT,
+    created_by TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(staff_id,title,cycle))`,
+  `CREATE TABLE IF NOT EXISTS hcot_performance_kpis (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, goal_id INTEGER NOT NULL REFERENCES hcot_performance_goals(id),
+    title TEXT NOT NULL, target_value TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(goal_id,title))`,
+  `CREATE TABLE IF NOT EXISTS hcot_performance_kpi_competencies (
+    kpi_id INTEGER NOT NULL REFERENCES hcot_performance_kpis(id),
+    competency_id INTEGER NOT NULL REFERENCES hcot_competencies(id),
+    status TEXT NOT NULL DEFAULT 'suggested' CHECK(status IN ('suggested','approved','rejected')),
+    match_score REAL NOT NULL DEFAULT 0, reviewed_by TEXT, reviewed_at TEXT,
+    PRIMARY KEY(kpi_id,competency_id))`,
+  `CREATE INDEX IF NOT EXISTS idx_hcot_performance_goals_staff ON hcot_performance_goals(staff_id,cycle)`,
   `CREATE TABLE IF NOT EXISTS hcot_reviews (
      id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL,
      staff_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
