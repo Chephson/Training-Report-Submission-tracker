@@ -1181,10 +1181,10 @@ async function renderHCOTSection(section) {
       const template='staff_email,goal_title,kpi_title,kpi_target,target_date,assessment_cycle\n'
       const list=goals.map(g=>{
         const children=kpis.filter(k=>k.goal_id===g.id)
-        return '<div class="card mt-12"><div class="card-head"><div><h3>'+esc(g.title)+'</h3><p>'+esc(g.full_name)+' · '+esc(g.cycle)+' · '+esc(g.target_date||'No deadline')+'</p></div></div><div class="card-body">'+
+        return '<div class="card mt-12"><div class="card-head"><div><h3>'+esc(g.title)+'</h3><p>'+esc(g.full_name)+' · '+esc(g.cycle)+' · '+esc(g.target_date||'No deadline')+'</p></div>'+(data.admin?'<button class="btn btn-sm pg-edit-goal" data-id="'+g.id+'">Edit goal</button>':'')+'</div><div class="card-body">'+
           (children.length?children.map(k=>{
             const items=matches.filter(m=>m.kpi_id===k.id)
-            return '<div class="mb-12"><strong>KPI: '+esc(k.title)+'</strong> <span class="tiny muted">Target: '+esc(k.target_value||'—')+'</span><div class="tiny muted">Matched competencies: '+(items.length?items.map(m=>'<span style="display:inline-block;margin:4px;padding:5px;border:1px solid #d3d8e0;border-radius:6px">'+esc(m.competency_name)+' ('+esc(m.status)+')'+(data.admin?'<button class="btn btn-sm pg-review" data-kpi="'+k.id+'" data-comp="'+m.competency_id+'" data-status="'+(m.status==='approved'?'rejected':'approved')+'">'+(m.status==='approved'?'Reject':'Approve')+'</button>':'')+'</span>').join(''):'No confident match; HCOT review required')+(data.admin?'<button class="btn btn-sm pg-add-match" data-kpi="'+k.id+'" data-staff="'+g.staff_id+'">Add mapped competency</button>':'')+'</div></div>'
+            return '<div class="mb-12"><strong>KPI: '+esc(k.title)+'</strong> <span class="tiny muted">Target: '+esc(k.target_value||'—')+'</span>'+(data.admin?'<button class="btn btn-sm pg-edit-kpi" data-id="'+k.id+'">Edit KPI</button>':'')+'<div class="tiny muted">Matched competencies: '+(items.length?items.map(m=>'<span style="display:inline-block;margin:4px;padding:5px;border:1px solid #d3d8e0;border-radius:6px">'+esc(m.competency_name)+' ('+esc(m.status)+')'+(data.admin?'<button class="btn btn-sm pg-review" data-kpi="'+k.id+'" data-comp="'+m.competency_id+'" data-status="'+(m.status==='approved'?'rejected':'approved')+'">'+(m.status==='approved'?'Reject':'Approve')+'</button>':'')+'</span>').join(''):'No confident match; HCOT review required')+(data.admin?'<button class="btn btn-sm pg-add-match" data-kpi="'+k.id+'" data-staff="'+g.staff_id+'">Add mapped competency</button>':'')+'</div></div>'
           }).join(''):'<p>No KPIs entered.</p>')+'</div></div>'
       }).join('')
       el.innerHTML='<div class="card"><div class="card-head"><h3>Performance Goals</h3></div><div class="card-body"><p class="tiny muted">Each goal contains its own KPIs. Suggested competencies come exclusively from the staff member’s existing mappings and require HCOT approval before being used for assessment.</p>'+
@@ -1227,7 +1227,29 @@ async function renderHCOTSection(section) {
             toast(result.rows+' KPI rows imported; review suggestions');renderHCOTSection('goals')
           }catch(e){toast(e.message,true)}
         }
-        $$('.pg-add-match').forEach(btn=>btn.onclick=async()=>{
+        $('.pg-edit-goal').forEach(btn=>btn.onclick=async()=>{
+          const goal=goals.find(g=>g.id===Number(btn.dataset.id))
+          if(!goal)return
+          const title=prompt('Edit performance goal title',goal.title)
+          if(title===null)return
+          const cycle=prompt('Edit assessment cycle',goal.cycle)
+          if(cycle===null)return
+          const date=prompt('Target date (YYYY-MM-DD or blank)',goal.target_date||'')
+          if(date===null)return
+          try{await api('/hcot/performance-goals/goal/'+goal.id,{method:'PATCH',body:JSON.stringify({title,cycle,target_date:date})});toast('Performance goal updated');renderHCOTSection('goals')}
+          catch(e){toast(e.message,true)}
+        })
+        $('.pg-edit-kpi').forEach(btn=>btn.onclick=async()=>{
+          const kpi=kpis.find(k=>k.id===Number(btn.dataset.id))
+          if(!kpi)return
+          const title=prompt('Edit KPI description',kpi.title)
+          if(title===null)return
+          const target=prompt('Edit KPI target',kpi.target_value||'')
+          if(target===null)return
+          try{const result=await api('/hcot/performance-goals/kpi/'+kpi.id,{method:'PATCH',body:JSON.stringify({title,target_value:target})});toast(result.review_required?'KPI updated. HCOT must review competency matches again.':'KPI updated');renderHCOTSection('goals')}
+          catch(e){toast(e.message,true)}
+        })
+        $('.pg-add-match').forEach(btn=>btn.onclick=async()=>{
           try{
             const result=await api('/hcot/performance-goals/eligible?staff_id='+Number(btn.dataset.staff))
             const options=(result.competencies||[]).map(x=>x.id+': '+x.name).join('\\n')
