@@ -949,7 +949,7 @@ async function renderHCOTSection(section) {
           }
           $('#hca-group').onchange()
           $('#hca-cycle').onchange=()=>$('#hca-staff').onchange()
-          $('.hca-save').forEach(btn=>btn.onclick=async()=>{
+          $$('.hca-save').forEach(btn=>btn.onclick=async()=>{
             const competencyId=Number(btn.dataset.id),input=$('.hca-score[data-id="'+competencyId+'"]'),notes=$('.hca-notes[data-id="'+competencyId+'"]')
             const score=Number(input.value),target=Number($('#hca-target').value),cycle=$('#hca-cycle').value.trim()
             if(!input.value||!Number.isInteger(score)||score<0||score>100||!Number.isInteger(target)||target<0||target>100||!cycle){toast('Enter an assessment cycle and valid whole-number score and target (0–100).',true);return}
@@ -1227,7 +1227,7 @@ async function renderHCOTSection(section) {
             toast(result.rows+' KPI rows imported; review suggestions');renderHCOTSection('goals')
           }catch(e){toast(e.message,true)}
         }
-        $('.pg-edit-goal').forEach(btn=>btn.onclick=async()=>{
+        $$('.pg-edit-goal').forEach(btn=>btn.onclick=async()=>{
           const goal=goals.find(g=>g.id===Number(btn.dataset.id))
           if(!goal)return
           const title=prompt('Edit performance goal title',goal.title)
@@ -1239,7 +1239,7 @@ async function renderHCOTSection(section) {
           try{await api('/hcot/performance-goals/goal/'+goal.id,{method:'PATCH',body:JSON.stringify({title,cycle,target_date:date})});toast('Performance goal updated');renderHCOTSection('goals')}
           catch(e){toast(e.message,true)}
         })
-        $('.pg-edit-kpi').forEach(btn=>btn.onclick=async()=>{
+        $$('.pg-edit-kpi').forEach(btn=>btn.onclick=async()=>{
           const kpi=kpis.find(k=>k.id===Number(btn.dataset.id))
           if(!kpi)return
           const title=prompt('Edit KPI description',kpi.title)
@@ -1249,7 +1249,7 @@ async function renderHCOTSection(section) {
           try{const result=await api('/hcot/performance-goals/kpi/'+kpi.id,{method:'PATCH',body:JSON.stringify({title,target_value:target})});toast(result.review_required?'KPI updated. HCOT must review competency matches again.':'KPI updated');renderHCOTSection('goals')}
           catch(e){toast(e.message,true)}
         })
-        $('.pg-add-match').forEach(btn=>btn.onclick=async()=>{
+        $$('.pg-add-match').forEach(btn=>btn.onclick=async()=>{
           try{
             const result=await api('/hcot/performance-goals/eligible?staff_id='+Number(btn.dataset.staff))
             const options=(result.competencies||[]).map(x=>x.id+': '+x.name).join('\\n')
