@@ -48,6 +48,7 @@ const state = {
   staff: [],
   filters: { q: '', team: '', status: 'all' },
   settings: {},
+  hcotRole: null,
 }
 
 /* ---------------- api ---------------- */
@@ -172,6 +173,22 @@ async function boot() {
   $('#gate').hidden = true
   $('#shell').hidden = false
 
+  // Verify the Cloudflare Access identity before requesting any administrative dashboard data.
+  const access=await api('/hcot/access-session')
+  state.hcotRole=access.role==='admin'?'admin':'supervisor'
+  $$('.nav a').forEach(link=>{
+    if(link.dataset.view){
+      const restricted=state.hcotRole!=='admin'&&link.dataset.view!=='supervisors'
+      link.hidden=restricted
+      link.style.display=restricted?'none':''
+    }
+  })
+  $('#period-picker').hidden=state.hcotRole!=='admin'
+  if(state.hcotRole!=='admin'){
+    navigate('supervisors',true)
+    return
+  }
+
   const [periodsRes, settingsRes] = await Promise.all([api('/periods'), api('/settings')])
   state.periods = periodsRes.periods || []
   state.settings = settingsRes.settings || {}
@@ -218,7 +235,8 @@ const ROUTES = {
   tracker: { title: 'Submission tracker', sub: 'Filter outstanding and submitted reports by training programme', render: renderTracker },
   programmes: { title: 'Programme assignments', sub: 'Manage assignments and outstanding reports', render: renderProgrammes },
   outstanding: { title: 'Outstanding reports', sub: 'Track incomplete training reports for each employee and programme', render: renderOutstandingReports },
-  hcot: { title: 'HCOT Training Monitor', sub: 'Training planning workspace (integration preview)', render: renderHCOT },
+  hcot: { title: 'Admin Controls', sub: 'HCOT administration and management workspace', render: renderHCOT },
+  supervisors: { title: 'Line Managers/Supervisors', sub: 'Your assigned staff, assessment requests and competency assessments', render: renderSupervisorGateway },
   history: { title: 'Staff training history', sub: 'A consolidated record of training programmes reported by staff', render: renderTrainingHistory },
   inbox: { title: 'Unmatched responses', sub: 'Submissions we could not attribute to anyone on the roster', render: renderInbox },
   roster: { title: 'Staff roster', sub: 'The people required to submit reports', render: renderRoster },
@@ -227,20 +245,25 @@ const ROUTES = {
 }
 
 function navigate(view, initial) {
-  if (!ROUTES[view]) view = 'dashboard'
+  if (state.hcotRole!=='admin' && view!=='supervisors') view='supervisors'
+  if (!ROUTES[view]) view = state.hcotRole==='supervisor'?'supervisors':'dashboard'
   state.view = view
-  if (!initial) location.hash = '#/' + view
+  if (!initial || (state.hcotRole==='supervisor' && location.hash!=='#/supervisors')) location.hash = '#/' + view
 
   $$('.nav a').forEach((a) => a.classList.toggle('active', a.dataset.view === view))
   const route = ROUTES[view]
   $('#page-title').textContent = route.title
   $('#page-sub').textContent = route.sub
   $('#topbar-actions').innerHTML = ''
-  document.title = `${route.title} · Training Report Tracker`
+  document.title = `${route.title} · HCD_HCOT Solution`
 
   const el = $('#view')
   el.innerHTML = `<div class="empty"><p class="muted">Loading…</p></div>`
-  Promise.resolve(route.render(el)).catch((e) => {
+  Promise.resolve(route.render(el)).then(()=>{
+    if(['roster','setup','settings'].includes(view) && state.hcotRole==='admin' && state.view===view){
+      $('#topbar-actions').insertAdjacentHTML('afterbegin','<a class="btn" href="#/hcot">Back to Admin Controls</a>')
+    }
+  }).catch((e) => {
     if (e.message === 'locked') return
     el.innerHTML = `<div class="notice notice-bad"><span class="nicon">${ico('alert')}</span><div><strong>Could not load this page</strong>${esc(e.message)}</div></div>`
   })
@@ -251,9 +274,18 @@ const hcotNav=document.querySelector('.nav')
 if(hcotNav&&!hcotNav.querySelector('[data-view="hcot"]')){
   const link=document.createElement('a')
   link.href='#/hcot';link.dataset.view='hcot'
-  link.innerHTML=ico('file',18)+'<span>HCOT Training Monitor</span>'
+  link.innerHTML=ico('file',18)+'<span>Admin Controls</span>'
   const after=hcotNav.querySelector('[data-view="programmes"]')
   if(after)after.insertAdjacentElement('afterend',link);else hcotNav.appendChild(link)
+}
+
+// Separate line-manager gateway; HCOT administrators retain their existing HCOT tabs.
+if(hcotNav&&!hcotNav.querySelector('[data-view="supervisors"]')){
+  const link=document.createElement('a')
+  link.href='#/supervisors';link.dataset.view='supervisors'
+  link.innerHTML=ico('roster',18)+'<span>Line Managers/Supervisors</span>'
+  const hcotLink=hcotNav.querySelector('[data-view="hcot"]')
+  if(hcotLink)hcotLink.insertAdjacentElement('afterend',link);else hcotNav.appendChild(link)
 }
 
 window.addEventListener('hashchange', () => {
@@ -277,7 +309,10 @@ async function renderDashboard(el) {
   const pending=total-submitted
   const rate=pct(submitted,total)
   $('#topbar-actions').innerHTML='<a class="btn btn-primary" href="#/tracker">View programme tracker</a><a class="btn" href="#/programmes">Manage assignments</a>'
+  const supervisorCard='<div class="card mt-16"><div class="card-head"><h3>Line Managers/Supervisors</h3></div><div class="card-body"><p>Access your mapped staff, competency assessments and assessment requests through the dedicated supervisor gateway.</p><a class="btn btn-primary" href="#/supervisors">Open Line Managers/Supervisors</a></div></div>'
+
   el.innerHTML=
+    supervisorCard+
     (overview.stats?.unmatched ? notice('warn',overview.stats.unmatched+' unmatched response(s)','Review Microsoft Forms submissions that could not be matched. <a href="#/inbox">Open unmatched responses</a>'):'')+
     '<div class="grid grid-4 mt-16">'+
     '<div class="card stat stat-accent"><div class="stat-label">Training programmes</div><div class="stat-value">'+programmes.length+'</div><div class="stat-foot">Registered programmes</div></div>'+
@@ -848,7 +883,7 @@ async function renderProgrammes(el) {
   const period=Number(state.periodId)
   const [pr,sr,ar]=await Promise.all([api('/programmes?period='+period),api('/staff'),api('/programme-assignments?period='+period)])
   const programmes=pr.programmes||[], staff=sr.staff||[]
-  el.innerHTML='<div class="card"><div class="card-head"><h3>Training programmes and assignments</h3></div><div class="card-body"><label class="field"><span>New programme</span><input id="pg-name" placeholder="Enter programme name"></label><button class="btn btn-primary" id="pg-add">Add programme</button><hr><label class="field"><span>Programme to assign</span><select id="pg-choice">'+programmes.map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select></label><p>Select staff members (each can attend multiple programmes):</p><label class="field"><span>Search staff by name or email</span><input id="pg-staff-search" type="search" placeholder="Type a name or email"></label><div style="max-height:220px;overflow:auto">'+staff.map(st=>'<label style="display:block;padding:5px"><input type="checkbox" class="pg-staff" value="'+st.id+'"> '+esc(st.full_name)+' — '+esc(st.email)+'</label>').join('')+'</div><button class="btn btn-primary mt-12" id="pg-assign">Assign selected staff</button></div></div><div class="card mt-16"><div class="card-head"><h3>Programme reporting status</h3></div><div class="table-wrap"><table><thead><tr><th>Programme</th><th>Assigned</th><th>Submitted</th><th>Outstanding</th><th></th></tr></thead><tbody>'+programmes.map(p=>'<tr><td>'+esc(p.name)+'</td><td>'+p.assigned+'</td><td>'+p.submitted+'</td><td><strong>'+p.pending+'</strong></td><td><button class="btn btn-sm pg-view" data-id="'+p.id+'">View staff</button></td></tr>').join('')+'</tbody></table></div></div><div id="pg-detail" class="mt-16"></div>'
+  el.innerHTML='<div class="card"><div class="card-head"><h3>Training programmes and assignments</h3></div><div class="card-body"><label class="field"><span>New programme</span><input id="pg-name" placeholder="Enter programme name"></label><button class="btn btn-primary" id="pg-add">Add programme</button><hr><label class="field"><span>Programme to assign</span><select id="pg-choice">'+programmes.map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select></label><p>Select staff members (each can attend multiple programmes):</p><label class="field"><span>Search staff by name or email</span><input id="pg-staff-search" type="search" placeholder="Type a name or email"></label><div style="max-height:220px;overflow:auto">'+staff.map(st=>'<label style="display:block;padding:5px"><input type="checkbox" class="pg-staff" value="'+st.id+'"> '+esc(st.full_name)+' — '+esc(st.email)+'</label>').join('')+'</div><button class="btn btn-primary mt-12" id="pg-assign">Assign selected staff</button></div></div><div class="card mt-16"><div class="card-head"><h3>Programme reporting status</h3></div><div class="table-wrap"><table><thead><tr><th>Programme</th><th>Assigned</th><th>Submitted</th><th>Outstanding</th><th></th></tr></thead><tbody>'+programmes.map(p=>'<tr><td>'+esc(p.name)+'</td><td>'+p.assigned+'</td><td>'+p.submitted+'</td><td><strong>'+p.pending+'</strong></td><td><button class="btn btn-sm pg-view" data-id="'+p.id+'">View staff</button> <button class="btn btn-sm pg-delete" data-id="'+p.id+'">Delete programme</button></td></tr>').join('')+'</tbody></table></div></div><div id="pg-detail" class="mt-16"></div>'
   const toolsPanel=document.createElement('div')
   toolsPanel.className='card mt-16'
   toolsPanel.innerHTML='<div class="card-head"><h3>Programme administration</h3></div><div class="card-body"><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"><button class="btn" id="pg-tab-import">Import staff assignments</button><button class="btn" id="pg-tab-rename">Edit programme name</button></div><div id="pg-tools-content"></div></div>'
@@ -881,6 +916,12 @@ async function renderProgrammes(el) {
   $('#pg-staff-search').oninput=e=>{const q=e.target.value.trim().toLowerCase();$$('.pg-staff').forEach(x=>{const row=x.closest('label');row.style.display=row.textContent.toLowerCase().includes(q)?'block':'none'})}
   $('#pg-add').onclick=async()=>{try{await api('/programmes',{method:'POST',body:JSON.stringify({name:$('#pg-name').value.trim()})});toast('Programme created');renderProgrammes(el)}catch(e){toast(e.message,true)}}
   $('#pg-assign').onclick=async()=>{const programme_id=Number($('#pg-choice').value),staff_ids=Array.from(document.querySelectorAll('.pg-staff')).filter(x=>x.checked).map(x=>Number(x.value));try{const r=await api('/programme-assignments',{method:'POST',body:JSON.stringify({programme_id,staff_ids,period_id:period})});toast(r.added+' staff assignments added');renderProgrammes(el)}catch(e){toast(e.message,true)}}
+  document.querySelectorAll('.pg-delete').forEach(btn=>btn.onclick=async()=>{
+    const programme=programmes.find(p=>p.id===Number(btn.dataset.id))
+    if(!programme)return
+    if(!confirm('Delete programme "'+programme.name+'" and its '+programme.assigned+' staff assignments? Submitted reports will be preserved. This cannot be undone.'))return
+    try{const result=await api('/programmes/'+programme.id,{method:'DELETE'});toast('Programme deleted; '+result.removed_assignments+' assignments removed');renderProgrammes(el)}catch(e){toast(e.message,true)}
+  })
   document.querySelectorAll('.pg-view').forEach(b=>b.onclick=async()=>{const data=await api('/programme-progress?period='+period+'&programme_id='+b.dataset.id);$('#pg-detail').innerHTML='<div class="card"><div class="card-head"><h3>Assigned staff: '+data.assigned+' · Submitted: '+data.submitted+' · Outstanding: '+data.pending+'</h3></div><div class="table-wrap"><table><thead><tr><th>Staff</th><th>Email</th><th>Status</th><th></th></tr></thead><tbody>'+data.rows.map(x=>'<tr><td>'+esc(x.full_name)+'</td><td>'+esc(x.email)+'</td><td>'+(x.submitted_at?'Submitted':'Outstanding')+'</td><td><button class="btn btn-sm pg-remove" data-id="'+x.id+'">Unassign</button></td></tr>').join('')+'</tbody></table></div></div>';document.querySelectorAll('.pg-remove').forEach(x=>x.onclick=async()=>{if(!confirm('Remove assignment? Existing submissions will be kept.'))return;await api('/programme-assignments/'+x.dataset.id,{method:'DELETE'});renderProgrammes(el)})})
 }
 
@@ -899,6 +940,78 @@ async function renderHCOTSection(section) {
       el.innerHTML='<div class="card"><div class="card-head"><h3>Training calendar — '+year+'</h3></div><div class="table-wrap"><table><thead><tr><th>Training</th><th>Dates</th><th>Location</th><th>Participants</th></tr></thead><tbody>'+
         (data.plans||[]).map(x=>'<tr><td>'+esc(x.title)+'</td><td>'+esc(x.start_date||'—')+' – '+esc(x.end_date||'—')+'</td><td>'+esc(x.location||'—')+'</td><td>'+x.participants+'</td></tr>').join('')+
         (data.plans.length?'':'<tr><td colspan="4">No training plans scheduled for this year.</td></tr>')+'</tbody></table></div></div>'
+    }else if(section==='line-managers'){
+      const [roster,data]=await Promise.all([api('/staff'),api('/hcot/line-manager/assignments')])
+      const staff=(roster.staff||[]).filter(x=>x.active===1),assignments=data.assignments||[]
+      el.innerHTML='<div class="card"><div class="card-head"><h3>Line manager assignments</h3></div><div class="card-body"><p class="tiny muted">Assign active Staff Roster employees to line managers, including HCOT administrators. Assessments remain limited to staff assigned to the manager. A staff member has one current line manager.</p><label class="field"><span>Staff member</span><select id="lm-staff">'+staff.map(x=>'<option value="'+x.id+'">'+esc(x.full_name)+' — '+esc(x.email)+'</option>').join('')+'</select></label><label class="field"><span>Line manager (Staff Roster)</span><select id="lm-manager"><option value="">Select line manager</option>'+staff.map(x=>'<option value="'+esc(x.email)+'">'+esc(x.full_name)+' — '+esc(x.email)+'</option>').join('')+'</select></label><button class="btn btn-primary" id="lm-save">Assign or reassign</button><h4 class="mt-16">Bulk CSV import</h4><p class="tiny muted">Required headers: staff_email,manager_email. Import validates every row before applying any assignments.</p><button class="btn" id="lm-template">Download CSV template</button><label class="field"><span>CSV UTF-8 file</span><input id="lm-file" type="file" accept=".csv,text/csv"></label><button class="btn btn-primary" id="lm-import">Import assignments</button><div id="lm-error" class="tiny"></div></div></div>'+
+        '<div class="card mt-16"><div class="card-head"><h3>Current assignments ('+assignments.length+')</h3></div><div class="table-wrap"><table><thead><tr><th>Staff</th><th>Line manager email</th><th>Action</th></tr></thead><tbody>'+assignments.map(x=>'<tr><td>'+esc(x.full_name)+' ('+esc(x.staff_email)+')</td><td>'+esc(x.manager_email)+'</td><td><button class="btn btn-sm lm-remove" data-id="'+x.staff_id+'">Remove</button></td></tr>').join('')+'</tbody></table></div></div>'
+      $('#lm-save').onclick=async()=>{try{await api('/hcot/line-manager/assignments',{method:'POST',body:JSON.stringify({staff_id:Number($('#lm-staff').value),manager_email:$('#lm-manager').value.trim()})});toast('Line manager assignment saved');renderHCOTSection('line-managers')}catch(e){toast(e.message,true)}}
+      $('#lm-template').onclick=()=>{const blob=new Blob(['staff_email,manager_email\r\n'],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='hcot-line-manager-mapping-template.csv';a.click();URL.revokeObjectURL(url)}
+      $('#lm-import').onclick=async()=>{const file=$('#lm-file').files?.[0];if(!file||!/\.csv$/i.test(file.name)){toast('Select a CSV file.',true);return}try{const result=await api('/hcot/line-manager/assignments/import',{method:'POST',headers:{'Content-Type':'text/csv'},body:await file.text()});toast('Imported '+result.count+' assignments');renderHCOTSection('line-managers')}catch(e){$('#lm-error').textContent=e.message;toast(e.message,true)}}
+      $$('.lm-remove').forEach(btn=>btn.onclick=async()=>{if(!confirm('Remove this line manager assignment?'))return;try{await api('/hcot/line-manager/assignments/'+btn.dataset.id,{method:'DELETE'});renderHCOTSection('line-managers')}catch(e){toast(e.message,true)}})
+    }else if(section==='assessments'){
+      const roster=await api('/hcot/line-manager/my-staff')
+      const staff=roster.staff||[]
+      const requestData=await api('/hcot/line-manager/assessment-requests').catch(err=>{console.warn('Assessment request inbox unavailable; assigned-staff assessments remain accessible:',err);return {requests:[]}})
+      const pendingRequests=(requestData.requests||[]).filter(x=>x.status==='pending')
+      const requestNotice=pendingRequests.length?'<div class="card mb-12"><div class="card-body"><h4>Assessment requests from HCOT</h4>'+pendingRequests.map(x=>'<p>Cycle: <strong>'+esc(x.cycle)+'</strong> — Staff: '+esc(x.staff_names||'All assigned staff')+' — Requested '+esc(x.requested_at)+'</p>').join('')+'</div></div>':''
+      el.innerHTML=requestNotice+'<div class="card"><div class="card-head"><h3>Individual competency assessment</h3></div><div class="card-body"><p class="tiny muted">All distinct competencies mapped to the selected staff member (cadre-inherited and direct) are assessed separately on a 0–100 scale.</p><label class="field"><span>Staff member</span><select id="hca-staff"><option value="">Select staff</option>'+staff.map(x=>'<option value="'+x.id+'">'+esc(x.full_name)+' — '+esc(x.email)+'</option>').join('')+'</select></label><label class="field"><span>Assessment cycle</span><input id="hca-cycle" maxlength="80" placeholder="e.g. 2026 Annual"></label><p class="tiny muted">Competency targets are set by HCOT administrators under Performance Goals. They are read-only for line managers.</p><div id="hca-detail"></div></div></div>'
+      $('#hca-staff').onchange=async()=>{
+        const detail=$('#hca-detail'),id=Number($('#hca-staff').value)
+        if(!id){detail.innerHTML='';return}
+        try{
+          const data=await api('/hcot/competency-assessments?staff_id='+id)
+          const approvedMatches=data.performance_matches||[]
+          const targetMap=new Map((data.competency_targets||[]).map(t=>[String(t.cycle)+'|'+String(t.competency_id),Number(t.target_score)]))
+          const inheritedTargetMap=new Map((data.inherited_targets||[]).filter(t=>t.target_score!==undefined).map(t=>[Number(t.competency_id),Number(t.target_score)]))
+          const cycles=[...new Set(approvedMatches.map(m=>m.cycle))]
+          const chosenCycle=$('#hca-cycle').value.trim()
+          if(cycles.length===1&&!chosenCycle)$('#hca-cycle').value=cycles[0]
+          const activeCycle=$('#hca-cycle').value.trim()
+          const approvedIds=new Set(approvedMatches.filter(m=>m.cycle===activeCycle).map(m=>Number(m.competency_id)))
+          const comps=data.performance_goals_assigned?(data.competencies||[]).filter(x=>approvedIds.has(Number(x.id))):(data.competencies||[])
+          const history=data.assessments||[]
+          const groupScores=(data.group_scores||[]).filter(g=>g.cycle===$('#hca-cycle').value.trim())
+          const groupScoreHtml='<div class="card mt-16"><div class="card-head"><h4>Competency group performance — '+esc($('#hca-cycle').value.trim()||'Select cycle')+'</h4></div><div class="card-body">'+
+            (groupScores.length?'<div class="table-wrap"><table><thead><tr><th>Competency group</th><th>Group average</th><th>Assessed / mapped</th><th>Coverage</th></tr></thead><tbody>'+
+            groupScores.map(g=>'<tr><td>'+esc(g.group_name)+'</td><td>'+(g.average_score===null?'Not assessed':g.average_score.toFixed(2)+'% ('+competenceLevel(g.average_score)+')')+'</td><td>'+g.assessed_competencies+' / '+g.total_competencies+'</td><td>'+(g.complete?'Complete':'Partial')+'</td></tr>').join('')+'</tbody></table></div>':'<p class="muted">No scores recorded for this assessment cycle yet.</p>')+
+            '<p class="tiny muted">Each group average uses the latest recorded score for each competency in this cycle. Unassessed competencies are excluded from the average and counted in coverage.</p></div></div>'
+          const linkedGroups=data.groups||[]
+          const linkedIds=new Set(linkedGroups.map(g=>String(g.id)))
+          const groupFor=x=>x.group_id&&linkedIds.has(String(x.group_id))?String(x.group_id):'other'
+          const visibleGroups=linkedGroups.filter(g=>comps.some(x=>groupFor(x)===String(g.id))).map(g=>({id:String(g.id),name:g.name}))
+          if(comps.some(x=>groupFor(x)==='other'))visibleGroups.push({id:'other',name:'Other mapped competencies'})
+
+
+          const performanceNotice=data.performance_goals_assigned?'<div class="notice notice-info"><div><strong>Performance Goals competency alignment</strong><p>Use the exact approved Performance Goals assessment cycle. Available cycles: '+esc(cycles.join(', ')||'none approved')+'.</p>'+ (approvedMatches.length?approvedMatches.map(m=>'<p>'+esc(m.cycle)+' · '+esc(m.goal_title)+' → '+esc(m.kpi_title)+' → '+esc(m.competency_name)+'</p>').join(''):'<p>No approved KPI-to-competency matches yet. HCOT must review the suggested competencies before assessment.</p>')+'</div></div>':''
+          detail.innerHTML=performanceNotice+'<h4>Step 1: Select a competency group</h4><label class="field"><span>Cadre-linked competency group</span><select id="hca-group"><option value="">Select competency group</option>'+visibleGroups.map(g=>'<option value="'+esc(g.id)+'">'+esc(g.name)+' ('+comps.filter(x=>(groupFor(x))===g.id).length+')</option>').join('')+'</select></label><div id="hca-group-items" style="display:none"><h4>Step 2: Assess individual competencies ('+comps.length+' total)</h4>'+
+            (comps.length?comps.map(x=>'<div class="card mt-16 hca-competency" data-group="'+(groupFor(x))+'"><div class="card-body"><strong>'+esc(x.name)+'</strong> <span class="tiny muted">Target: '+(inheritedTargetMap.has(Number(x.id))?competenceScore(inheritedTargetMap.get(Number(x.id))):targetMap.has(activeCycle+'|'+x.id)?competenceScore(targetMap.get(activeCycle+'|'+x.id)):'Not set by HCOT')+'</span> <span class="tiny muted">('+esc(x.category)+')</span> <span class="tiny muted">'+(x.inherited&&x.direct?'Cadre + direct':x.inherited?'Cadre-inherited':'Direct assignment')+'</span><label class="field"><span>Score (0–100)</span><input type="number" min="0" max="100" step="1" class="hca-score" data-id="'+x.id+'"><span class="hca-score-level tiny muted" data-id="'+x.id+'">Enter a score to see competence level</span></label><label class="field"><span>Assessment notes</span><textarea class="hca-notes" data-id="'+x.id+'"></textarea><button class="btn btn-primary hca-save" data-id="'+x.id+'">Record assessment</button></div></div>').join(''):'<p>No competencies are currently mapped to this staff member. Add cadre-based or direct mappings in the Competencies tab first.</p>')+'</div>'+
+            groupScoreHtml+
+            '<h4 class="mt-16">Individual competency performance and Assessment history</h4><div class="table-wrap"><table><thead><tr><th>Cycle</th><th>Competency</th><th>Score / Competence level</th><th>Target / Competence level</th><th>Gap</th><th>Assessor</th><th>Date</th></tr></thead><tbody>'+
+            history.map(x=>'<tr><td>'+esc(x.cycle)+'</td><td>'+esc(x.competency_name)+'</td><td>'+competenceScore(x.score)+'</td><td>'+competenceScore(x.target_score)+'</td><td>'+Math.max(0,x.target_score-x.score)+'</td><td>'+esc(x.assessor_email)+'</td><td>'+esc(x.assessed_at)+'</td></tr>').join('')+
+            (history.length?'':'<tr><td colspan="7">No assessments recorded.</td></tr>')+'</tbody></table></div>'
+          if(visibleGroups.length){$('#hca-group').value=visibleGroups[0].id}
+          $('#hca-group').onchange=()=>{
+            const selected=$('#hca-group').value
+            $('#hca-group-items').style.display=selected?'block':'none'
+            $$('.hca-competency').forEach(card=>{card.style.display=card.dataset.group===selected?'block':'none'})
+          }
+          $('#hca-group').onchange()
+          $('#hca-cycle').onchange=()=>$('#hca-staff').onchange()
+          $$('.hca-score').forEach(input=>{
+            const label=$('.hca-score-level[data-id="'+input.dataset.id+'"]')
+            input.oninput=()=>{label.textContent=input.value.trim()===''?'Enter a score to see competence level':competenceLevel(input.value)}
+          })
+          $$('.hca-save').forEach(btn=>btn.onclick=async()=>{
+            const competencyId=Number(btn.dataset.id),input=$('.hca-score[data-id="'+competencyId+'"]'),notes=$('.hca-notes[data-id="'+competencyId+'"]')
+            const score=Number(input.value),cycle=$('#hca-cycle').value.trim(),target=inheritedTargetMap.get(competencyId)??targetMap.get(cycle+'|'+competencyId)
+            if(!input.value||!Number.isInteger(score)||score<0||score>100||!cycle){toast('Enter an assessment cycle and valid whole-number score (0–100).',true);return}
+            if(target===undefined){toast('HCOT must set the target score for this competency and cycle before assessment.',true);return}
+            try{await api('/hcot/competency-assessments',{method:'POST',body:JSON.stringify({staff_id:id,competency_id:competencyId,cycle,score,notes:notes.value})});toast('Assessment recorded: '+score+' — '+competenceLevel(score)+' (target '+target+' — '+competenceLevel(target)+')');$('#hca-staff').onchange()}
+            catch(e){toast(e.message,true)}
+          })
+        }catch(e){detail.innerHTML='<div class="notice notice-bad">'+esc(e.message)+'</div>'}
+      }
     }else if(section==='competencies'){
       const session=await api('/hcot/access-session')
       const isAdmin=session.role==='admin'
@@ -908,29 +1021,132 @@ async function renderHCOTSection(section) {
         isAdmin?api('/staff-directory/divisions'):Promise.resolve({options:[]})
       ])
       const comps=catalogue.competencies||[],staff=roster.staff||[],mappings=mapped.mappings||[],divisions=divisionsData.options||[]
+      const [cadreData,ruleData,effectiveData,groupData]=await Promise.all([api('/hcot/cadres'),api('/hcot/cadre-competencies'),api('/hcot/effective-competencies'),api('/hcot/competency-groups')])
+      const cadres=cadreData.cadres||[],rules=ruleData.rules||[],effective=effectiveData.mappings||[]
+      const groups=groupData.groups||[]
+      const groupOptions=groups.map(g=>'<option value="'+g.id+'">'+esc(g.name)+'</option>').join('')
       const options=(values,empty)=>'<option value="">'+empty+'</option>'+values.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join('')
       const orgLabel=c=>[c.division,c.department,c.unit].filter(Boolean).join(' / ')||'Organisation-wide'
-      el.innerHTML='<div class="card"><div class="card-head"><h3>Competency library & staff mapping</h3></div>'+
+      const sameScope=(scope,value)=>!scope||String(scope).trim().toLowerCase()===String(value||'').trim().toLowerCase()
+      const staffGroupLookup=isAdmin?'<div class="card mt-16"><div class="card-head"><h3>Find staff competency groups</h3></div><div class="card-body"><label class="field"><span>Search Staff Roster by name or email</span><input id="hcg-staff-search" placeholder="Type staff name or email"></label><label class="field"><span>Select staff</span><select id="hcg-staff-select"><option value="">Select staff</option></select></label><div id="hcg-staff-groups" class="mt-16 tiny muted">Search for a staff member to view their linked competency groups.</div></div></div>':''
+      el.innerHTML='<div class="card"><div class="card-head"><h3>Competency groups and cadre links</h3></div><div class="card-body"><p class="tiny muted">Create groups with unique group codes, assign competencies to one or more groups, then link groups to job cadres. Existing mappings are preserved.</p>'+
+        (isAdmin?'<label class="field"><span>New competency group</span><input id="hcg-name" maxlength="150"></label><label class="field"><span>Unique group code</span><input id="hcg-code" maxlength="80" placeholder="e.g. LEAD-001"></label><button class="btn" id="hcg-create">Create group</button><hr><label class="field"><span>Existing group to edit or delete</span><select id="hcg-manage-group"><option value="">Select group</option>'+groupOptions+'</select></label><label class="field"><span>Group name</span><input id="hcg-manage-name" maxlength="150"></label><label class="field"><span>Description</span><textarea id="hcg-manage-description"></textarea></label><button class="btn" id="hcg-save-group">Save group changes</button> <button class="btn" id="hcg-delete-group">Delete group</button><hr><label class="field"><span>Competency group</span><select id="hcg-comp-group"><option value="">Select group</option>'+groupOptions+'</select></label><label class="field"><span>Individual competency</span><select id="hcg-comp"><option value="">Select competency</option>'+comps.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('')+'</select></label><button class="btn" id="hcg-link-comp">Add competency to group</button><hr><label class="field"><span>Group to link to cadre</span><select id="hcg-cadre-group"><option value="">Select group</option>'+groupOptions+'</select></label><label class="field"><span>Job cadre</span><select id="hcg-cadre"><option value="">Select cadre</option>'+cadres.filter(c=>c.active).map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('')+'</select></label><label class="field"><span>Division (optional)</span><select id="hcg-scope-div">'+options(divisions,'Commission-wide')+'</select></label><label class="field"><span>Department (optional)</span><select id="hcg-scope-dept" disabled><option value="">All departments</option></select></label><label class="field"><span>Unit (optional)</span><select id="hcg-scope-unit" disabled><option value="">All units</option></select></label><button class="btn btn-primary" id="hcg-link-cadre">Link group to cadre and scope</button>':'')+
+        '<div class="mt-16"><h4>Bulk upload competency groups and cadre mappings</h4><p class="tiny muted">New competencies are created automatically when their names do not exist in the library. Use unique group_code values to distinguish groups with the same name. Existing competency categories must match Core or Functional. Use active cadre names. Organisational scope is inferred from division, department and unit (leave all three blank for Commission-wide). Repeated group codes reuse the existing group; different codes may have identical group names. A competency may belong to multiple groups.</p><button class="btn" id="hcg-template">Download CSV template</button><label class="field"><span>Upload completed CSV</span><input id="hcg-upload-file" type="file" accept=".csv,text/csv"></label><button class="btn btn-primary" id="hcg-upload">Import groups and mappings</button><div id="hcg-import-result" class="tiny"></div></div>'+ 
+        '<div class="mt-16">'+groups.map(g=>'<div class="mb-12"><strong>'+esc(g.name)+'</strong> — '+(groupData.competencies||[]).filter(x=>x.group_id===g.id).map(x=>esc(comps.find(c=>c.id===x.competency_id)?.name||'')).join(', ')+'<div class="tiny muted">Cadres: '+(groupData.cadres||[]).filter(x=>x.group_id===g.id).map(x=>esc(cadres.find(c=>c.id===x.cadre_id)?.name||'')+' ('+esc([x.division,x.department,x.unit].filter(Boolean).join(' / ')||'Commission-wide')+')').join(', ')+'</div></div>').join('')+'</div></div></div>'+ 
+        '<div class="card"><div class="card-head"><h3>Competency library & staff mapping</h3></div>'+
         (isAdmin?'<div class="card-body"><h4>Add competency</h4><label class="field"><span>Competency name</span><input id="hcot-comp-name" maxlength="200"></label><label class="field"><span>Category</span><select id="hcot-comp-cat"><option value="core">Core</option><option value="functional">Functional</option></select></label><label class="field"><span>Division (optional)</span><select id="hcot-comp-div">'+options(divisions,'Organisation-wide')+'</select></label><label class="field"><span>Department (optional)</span><select id="hcot-comp-dept" disabled><option value="">All departments</option></select></label><label class="field"><span>Unit (optional)</span><select id="hcot-comp-unit" disabled><option value="">All units / not applicable</option></select></label><label class="field"><span>Description</span><textarea id="hcot-comp-desc"></textarea></label><button class="btn btn-primary" id="hcot-comp-add">Add competency</button></div>':'')+
         '<div class="table-wrap"><table><thead><tr><th>Competency</th><th>Category</th><th>Organisational scope</th><th>Assigned staff</th><th>Actions</th></tr></thead><tbody>'+
         comps.map(c=>'<tr><td>'+esc(c.name)+'</td><td>'+esc(c.category)+'</td><td>'+esc(orgLabel(c))+'</td><td>'+mappings.filter(m=>m.competency_id===c.id).length+'</td><td>'+(isAdmin?'<button class="btn btn-sm hcot-comp-edit" data-id="'+c.id+'">Edit</button> <button class="btn btn-sm hcot-comp-delete" data-id="'+c.id+'">Delete</button>':'—')+'</td></tr>').join('')+
         (comps.length?'':'<tr><td colspan="5">No competencies entered.</td></tr>')+'</tbody></table></div></div>'+
-        '<div class="card mt-16"><div class="card-head"><h3>Staff competency assignments</h3></div>'+
+        staffGroupLookup+'<div class="card mt-16"><div class="card-head"><h3>Staff competency assignments</h3></div>'+
         (isAdmin?'<div class="card-body"><label class="field"><span>Staff member (central Staff Roster)</span><select id="hcot-map-staff">'+options(staff.filter(x=>x.active===1).map(x=>String(x.id)),'Select staff')+'</select></label><div id="hcot-map-staff-label" class="tiny muted"></div><label class="field"><span>Matching competency</span><select id="hcot-map-comp"><option value="">Select staff first</option></select></label><button class="btn btn-primary" id="hcot-map-add">Assign competency</button></div>':'')+
         '<div class="table-wrap"><table><thead><tr><th>Staff</th><th>Competency</th><th>Action</th></tr></thead><tbody>'+
         mappings.map(m=>'<tr><td>'+esc(m.full_name)+'</td><td>'+esc(m.competency_name)+'</td><td>'+(isAdmin?'<button class="btn btn-sm hcot-map-remove" data-staff="'+m.staff_id+'" data-comp="'+m.competency_id+'">Remove</button>':'—')+'</td></tr>').join('')+
         (mappings.length?'':'<tr><td colspan="3">No staff competencies mapped.</td></tr>')+'</tbody></table></div></div>'
-      const [cadreData,ruleData,effectiveData]=await Promise.all([api('/hcot/cadres'),api('/hcot/cadre-competencies'),api('/hcot/effective-competencies')])
-      const cadres=cadreData.cadres||[],rules=ruleData.rules||[],effective=effectiveData.mappings||[]
+
+      if(isAdmin){
+        const [policy,levelPolicy]=await Promise.all([api('/hcot/mapping-targets'),api('/hcot/competency-level-target-policy')])
+        const levels=['Basic','Intermediate','Advanced','Expert']
+        const levelOptions=levels.map(x=>'<option value="'+x+'">'+x+' ('+levelPolicy.scores[x]+')</option>').join('')
+        const mappingChoices=(groupData.cadres||[]).map(m=>({
+          ...m,group:groups.find(g=>Number(g.id)===Number(m.group_id)),
+          cadre:cadres.find(k=>Number(k.id)===Number(m.cadre_id))
+        })).filter(m=>m.group&&m.cadre)
+        const keyOf=m=>[m.cadre_id,m.group_id,m.division||'',m.department||'',m.unit||''].join('|')
+        const mappingOptions=mappingChoices.map((m,i)=>'<option value="'+i+'">'+esc(m.cadre.name)+' — '+esc(m.group.name)+' — '+esc(orgLabel(m))+'</option>').join('')
+        el.insertAdjacentHTML('afterbegin','<div class="card mt-16"><div class="card-head"><h3>Competency level target score calibration</h3></div><div class="card-body"><p class="tiny muted">Adjust the numeric target assigned to each competence level. The competence bands remain fixed. Saving recalibrates all current cadre/group target mappings; previously submitted assessments retain their recorded scores and targets.</p>'+levels.map(level=>'<label class="field"><span>'+level+' (allowed '+levelPolicy.bands[level][0]+'–'+levelPolicy.bands[level][1]+')</span><input class="hct-policy-score" type="number" step="1" min="'+levelPolicy.bands[level][0]+'" max="'+levelPolicy.bands[level][1]+'" data-level="'+level+'" value="'+levelPolicy.scores[level]+'"></label>').join('')+'<button class="btn btn-primary" id="hct-policy-save">Save and recalibrate target scores</button></div></div>')
+        $('#hct-policy-save').onclick=async()=>{
+          const scores={}
+          for(const field of $$('.hct-policy-score')){
+            const level=field.dataset.level,score=Number(field.value),[lo,hi]=levelPolicy.bands[level]
+            if(!field.value.trim()||!Number.isInteger(score)||score<lo||score>hi){toast(level+' must be a whole number from '+lo+' to '+hi+'.',true);return}
+            scores[level]=score
+          }
+          if(!confirm('Apply these target scores to all current competency mapping targets? Historical assessments will not change.'))return
+          try{await api('/hcot/competency-level-target-policy',{method:'PUT',body:JSON.stringify({scores})});toast('Competency target scores recalibrated');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}
+        }
+        el.insertAdjacentHTML('afterbegin','<div class="card mt-16"><div class="card-head"><h3>Administrator-controlled competency targets</h3></div><div class="card-body"><p class="tiny muted">Select a mapped cadre/group and scope, set the group target, then assign individual competency targets. Individual competencies default to the group target; targets are inherited by staff and read-only to line managers.</p><label class="field"><span>Existing cadre / competency group / scope mapping</span><select id="hct-mapping"><option value="">Select existing mapping</option>'+mappingOptions+'</select></label><label class="field"><span>Group target level</span><select id="hct-group-level">'+levelOptions+'</select></label><div id="hct-members"></div><button class="btn btn-primary" id="hct-save">Save group and competency targets</button><hr><h4>Bulk upload competency targets</h4><p class="tiny muted">CSV UTF-8 columns: cadre,competency_group,competency,division,department,unit,target_level. Leave competency blank for group target. Existing cadre/group/scope mappings are required. All rows are validated before changes are applied.</p><button class="btn" id="hct-template">Download target CSV template</button><label class="field"><span>Upload CSV</span><input type="file" accept=".csv,text/csv" id="hct-file"></label><button class="btn" id="hct-validate">Validate and preview</button> <button class="btn btn-primary" id="hct-import" disabled>Confirm bulk upload</button><div id="hct-result" class="tiny muted"></div><p class="tiny muted">Configured target records: '+(policy.targets||[]).length+'</p></div></div>')
+        const mappingSelect=$('#hct-mapping'),memberBox=$('#hct-members'),groupLevel=$('#hct-group-level')
+        const existingFor=(m,cid)=>(policy.targets||[]).find(t=>Number(t.cadre_id)===Number(m.cadre_id)&&Number(t.group_id)===Number(m.group_id)&&Number(t.competency_id)===cid&&
+          String(t.division||'').toLowerCase()===String(m.division||'').toLowerCase()&&String(t.department||'').toLowerCase()===String(m.department||'').toLowerCase()&&String(t.unit||'').toLowerCase()===String(m.unit||'').toLowerCase())
+        const drawMembers=()=>{
+          const m=mappingChoices[Number(mappingSelect.value)]
+          if(!m||mappingSelect.value===''){memberBox.innerHTML='';return}
+          const prior=existingFor(m,0)
+          groupLevel.value=prior?.target_level||'Advanced'
+          const ids=(groupData.competencies||[]).filter(x=>Number(x.group_id)===Number(m.group_id)).map(x=>Number(x.competency_id))
+          memberBox.innerHTML='<h4>Individual competency targets</h4>'+ids.map(id=>{
+            const comp=comps.find(x=>Number(x.id)===id),priorComp=existingFor(m,id)
+            return comp?'<label class="field"><span>'+esc(comp.name)+'</span><select class="hct-comp-level" data-id="'+id+'">'+levels.map(l=>'<option value="'+l+'" '+(l===(priorComp?.target_level||groupLevel.value)?'selected':'')+'>'+l+'</option>').join('')+'</select></label>':''
+          }).join('')
+        }
+        mappingSelect.onchange=drawMembers
+        groupLevel.onchange=()=>memberBox.querySelectorAll('.hct-comp-level').forEach(x=>{if(!existingFor(mappingChoices[Number(mappingSelect.value)],Number(x.dataset.id)))x.value=groupLevel.value})
+        $('#hct-save').onclick=async()=>{
+          const m=mappingChoices[Number(mappingSelect.value)]
+          if(!m||mappingSelect.value===''){toast('Select an existing cadre/group mapping.',true);return}
+          const base={cadre:m.cadre.name,competency_group:m.group.name,division:m.division||'',department:m.department||'',unit:m.unit||''}
+          const rows=[{...base,competency:'',target_level:groupLevel.value},...Array.from(memberBox.querySelectorAll('.hct-comp-level')).map(x=>({...base,competency:comps.find(c=>Number(c.id)===Number(x.dataset.id))?.name||'',target_level:x.value}))]
+          try{await api('/hcot/mapping-targets/bulk',{method:'POST',body:JSON.stringify({rows,commit:true})});toast('Competency targets saved');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}
+        }
+        $('#hct-template').onclick=()=>{
+          const content='cadre,competency_group,competency,division,department,unit,target_level\\r\\n'
+          const url=URL.createObjectURL(new Blob(['\uFEFF'+content],{type:'text/csv;charset=utf-8'}))
+          const a=document.createElement('a');a.href=url;a.download='hcot-competency-targets-template.csv';a.click();URL.revokeObjectURL(url)
+        }
+        let validatedTargets=null
+        const upload=$('#hct-file'),confirmUpload=$('#hct-import'),resultBox=$('#hct-result')
+        upload.onchange=()=>{validatedTargets=null;confirmUpload.disabled=true;resultBox.textContent='Validate the selected file before uploading.'}
+        $('#hct-validate').onclick=async()=>{
+          try{
+            const file=upload.files?.[0];if(!file||!/\\.csv$/i.test(file.name))throw Error('Select a CSV UTF-8 file.')
+            if(file.size>1000000)throw Error('CSV exceeds 1 MB.')
+            const text=await file.text(),lines=[];let fields=[],field='',quoted=false
+            for(let i=0;i<text.length;i++){const ch=text[i];if(ch==='"'){if(quoted&&text[i+1]==='"'){field+='"';i++}else quoted=!quoted}else if(ch===','&&!quoted){fields.push(field);field=''}else if((ch==='\\r'||ch==='\\n')&&!quoted){if(ch==='\\r'&&text[i+1]==='\\n')i++;fields.push(field);if(fields.some(v=>v.trim()))lines.push(fields);fields=[];field=''}else field+=ch}
+            if(quoted)throw Error('Unclosed CSV quote')
+            fields.push(field);if(fields.some(v=>v.trim()))lines.push(fields)
+            const header=(lines.shift()||[]).map(x=>x.trim().replace(/^\\uFEFF/,'').toLowerCase())
+            const required=['cadre','competency_group','competency','division','department','unit','target_level']
+            if(required.some(k=>!header.includes(k)))throw Error('Missing required columns: '+required.filter(k=>!header.includes(k)).join(', '))
+            const rows=lines.map((line,i)=>{if(line.length!==header.length)throw Error('Incorrect column count on row '+(i+2));return Object.fromEntries(header.map((h,j)=>[h,line[j].trim()]))})
+            const check=await api('/hcot/mapping-targets/bulk',{method:'POST',body:JSON.stringify({rows,commit:false})})
+            validatedTargets=rows;confirmUpload.disabled=false;resultBox.textContent='Validated '+check.preview.length+' target rows. Review the file and click Confirm bulk upload.'
+          }catch(e){validatedTargets=null;confirmUpload.disabled=true;resultBox.textContent=e.message;toast(e.message,true)}
+        }
+        confirmUpload.onclick=async()=>{
+          if(!validatedTargets)return
+          try{const res=await api('/hcot/mapping-targets/bulk',{method:'POST',body:JSON.stringify({rows:validatedTargets,commit:true})});toast(res.updated+' competency targets saved');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}
+        }
+      }
+      if(isAdmin){
+        const search=$('#hcg-staff-search'),select=$('#hcg-staff-select'),result=$('#hcg-staff-groups')
+        const rosterStaff=staff.filter(x=>Number(x.active)===1)
+        const renderChoices=()=>{
+          const q=search.value.trim().toLowerCase()
+          const previous=select.value
+          const matches=q?rosterStaff.filter(x=>(String(x.full_name||'')+' '+String(x.email||'')).toLowerCase().includes(q)):rosterStaff
+          select.innerHTML='<option value="">Select staff</option>'+matches.map(x=>'<option value="'+x.id+'">'+esc(x.full_name)+' — '+esc(x.email)+'</option>').join('')
+          if(matches.some(x=>String(x.id)===previous))select.value=previous
+          else result.textContent=q&&!matches.length?'No matching active staff found.':'Select a staff member to view their competency groups.'
+          if(select.value)renderGroups()
+        }
+        const renderGroups=()=>{
+          const person=rosterStaff.find(x=>String(x.id)===select.value)
+          if(!person){result.textContent='Select a staff member to view their competency groups.';return}
+          const links=(groupData.cadres||[]).filter(x=>Number(x.cadre_id)===Number(person.cadre_id)&&sameScope(x.division,person.division)&&sameScope(x.department,person.department)&&sameScope(x.unit,person.unit))
+          const matched=[...new Map(links.map(x=>[Number(x.group_id),groups.find(g=>Number(g.id)===Number(x.group_id))]).filter(x=>x[1])).values()]
+          result.innerHTML='<strong>'+esc(person.full_name)+'</strong> — '+esc(person.email)+'<div>Cadre: '+esc(person.cadre_name||'Not assigned')+'</div>'+(matched.length?'<ul>'+matched.map(g=>'<li><strong>'+esc(g.name)+'</strong> — '+(groupData.competencies||[]).filter(x=>Number(x.group_id)===Number(g.id)).map(x=>esc(comps.find(c=>Number(c.id)===Number(x.competency_id))?.name||'')).filter(Boolean).join(', ')+'</li>').join('')+'</ul>':'<p>No competency groups are linked to this staff member through their cadre and organisational scope.</p>')
+        }
+        search.oninput=renderChoices
+        select.onchange=renderGroups
+        renderChoices()
+      }
       const cadreLabel=id=>cadres.find(x=>String(x.id)===String(id))?.name||'Unassigned'
       el.insertAdjacentHTML('beforeend','<div class="card mt-16"><div class="card-head"><h3>Cadre-based competency inheritance</h3></div>'+
-        (isAdmin?'<div class="card-body"><label class="field"><span>Create staff cadre</span><input id="hcot-cadre-name" placeholder="e.g. Senior Manager"></label><button class="btn" id="hcot-cadre-create">Add cadre</button><hr><label class="field"><span>Staff member</span><select id="hcot-cadre-staff">'+options(staff.map(x=>String(x.id)),'Select staff')+'</select></label><label class="field"><span>Staff cadre</span><select id="hcot-cadre-assign">'+options(cadres.filter(x=>x.active).map(x=>String(x.id)),'No cadre')+'</select></label><button class="btn" id="hcot-cadre-save">Save staff cadre</button><hr><h4>Map competency to cadre</h4><label class="field"><span>Cadre</span><select id="hcot-rule-cadre">'+options(cadres.filter(x=>x.active).map(x=>String(x.id)),'Select cadre')+'</select></label><label class="field"><span>Competency</span><select id="hcot-rule-comp">'+options(comps.map(x=>String(x.id)),'Select competency')+'</select></label><label class="field"><span>Division (optional)</span><select id="hcot-rule-division">'+options(divisions,'All divisions')+'</select></label><label class="field"><span>Department (optional)</span><select id="hcot-rule-department" disabled><option value="">All departments</option></select></label><label class="field"><span>Unit (optional)</span><select id="hcot-rule-unit" disabled><option value="">All units</option></select></label><button class="btn btn-primary" id="hcot-rule-create">Assign competency to cadre</button><hr><h4>Bulk import cadre competencies</h4><p class="tiny muted">CSV columns: competency_name,category,description,cadre,division,department,unit. Cadres must already exist. Preview checks all rows before importing.</p><button class="btn" id="hcot-bulk-template">Download CSV template</button><label class="field"><span>Upload CSV file</span><input type="file" accept=".csv,text/csv" id="hcot-bulk-file"></label><button class="btn" id="hcot-bulk-preview">Validate &amp; preview</button><div id="hcot-bulk-result" class="tiny muted"></div><button class="btn btn-primary" id="hcot-bulk-commit" disabled>Confirm bulk import</button></div>':'')+
+        (isAdmin?'<div class="card-body"><label class="field"><span>Create staff cadre</span><input id="hcot-cadre-name" placeholder="e.g. Senior Manager"></label><button class="btn" id="hcot-cadre-create">Add cadre</button><hr><h4>Edit or delete existing cadre</h4><label class="field"><span>Existing cadre</span><select id="hcot-cadre-manage">'+'<option value="">Select cadre</option>'+cadres.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+'</option>').join('')+'</select></label><label class="field"><span>New cadre name</span><input id="hcot-cadre-rename" maxlength="120" placeholder="Enter updated cadre name"></label><button class="btn" id="hcot-cadre-update">Save cadre name</button> <button class="btn btn-danger" id="hcot-cadre-delete">Delete cadre</button><p class="tiny muted">Deletion is blocked while staff or competency/group mappings reference the cadre. Rename preserves existing assignments.</p><hr><label class="field"><span>Staff member</span><select id="hcot-cadre-staff">'+options(staff.map(x=>String(x.id)),'Select staff')+'</select></label><label class="field"><span>Staff cadre</span><select id="hcot-cadre-assign">'+'<option value="">No cadre</option>'+cadres.filter(x=>x.active).map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+'</option>').join('')+'</select></label><button class="btn" id="hcot-cadre-save">Save staff cadre</button><hr><h4>Map competency to cadre</h4><label class="field"><span>Cadre</span><select id="hcot-rule-cadre">'+'<option value="">Select cadre</option>'+cadres.filter(x=>x.active).map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+'</option>').join('')+'</select></label><label class="field"><span>Competency</span><select id="hcot-rule-comp">'+options(comps.map(x=>String(x.id)),'Select competency')+'</select></label><label class="field"><span>Division (optional)</span><select id="hcot-rule-division">'+options(divisions,'All divisions')+'</select></label><label class="field"><span>Department (optional)</span><select id="hcot-rule-department" disabled><option value="">All departments</option></select></label><label class="field"><span>Unit (optional)</span><select id="hcot-rule-unit" disabled><option value="">All units</option></select></label><button class="btn btn-primary" id="hcot-rule-create">Assign competency to cadre</button><hr><h4>Bulk import cadre competencies</h4><p class="tiny muted">CSV columns: competency_name,category,description,cadre,division,department,unit. Cadres must already exist. Preview checks all rows before importing.</p><button class="btn" id="hcot-bulk-template">Download CSV template</button><label class="field"><span>Upload CSV file</span><input type="file" accept=".csv,text/csv" id="hcot-bulk-file"></label><button class="btn" id="hcot-bulk-preview">Validate &amp; preview</button><div id="hcot-bulk-result" class="tiny muted"></div><button class="btn btn-primary" id="hcot-bulk-commit" disabled>Confirm bulk import</button></div>':'')+
         '<div class="table-wrap"><table><thead><tr><th>Cadre</th><th>Competency</th><th>Division / Department / Unit</th><th>Action</th></tr></thead><tbody>'+
         rules.map(x=>'<tr><td>'+esc(x.cadre_name)+'</td><td>'+esc(x.competency_name)+'</td><td>'+esc(orgLabel(x))+'</td><td>'+(isAdmin?'<button class="btn btn-sm hcot-rule-remove" data-id="'+x.id+'">Remove rule</button>':'—')+'</td></tr>').join('')+
-        (rules.length?'':'<tr><td colspan="4">No cadre competency rules yet.</td></tr>')+'</tbody></table></div></div>'+
-        '<div class="card mt-16"><div class="card-head"><h3>Effective staff competencies (inherited + direct)</h3></div><div class="table-wrap"><table><thead><tr><th>Staff</th><th>Cadre</th><th>Competency</th><th>Assignment source</th></tr></thead><tbody>'+
-        effective.map(x=>'<tr><td>'+esc(x.full_name)+'</td><td>'+esc(cadreLabel(x.cadre_id))+'</td><td>'+esc(x.competency_name)+'</td><td>'+(x.inherited&&x.direct?'Inherited + direct':x.inherited?'Inherited':'Direct')+'</td></tr>').join('')+
-        (effective.length?'':'<tr><td colspan="4">No effective competency assignments.</td></tr>')+'</tbody></table></div></div>')
+        (rules.length?'':'<tr><td colspan="4">No cadre competency rules yet.</td></tr>')+'</tbody></table></div></div>')
       if(isAdmin){
         let validatedBulk=null
         const parseCSV=text=>{
@@ -973,16 +1189,70 @@ async function renderHCOTSection(section) {
           catch(e){bulkResult.textContent=e.message;toast(e.message,true)}
         }
         const staffCadre=$('#hcot-cadre-staff'),cadreSelect=$('#hcot-cadre-assign'),ruleComp=$('#hcot-rule-comp')
+        for(const id of ['hcot-cadre-assign','hcot-rule-cadre']){
+          $('#'+id).querySelectorAll('option').forEach(o=>{if(o.value){const cadre=cadres.find(x=>String(x.id)===o.value);if(cadre)o.textContent=cadre.name}})
+        }
         staffCadre.querySelectorAll('option').forEach(o=>{if(o.value){const x=staff.find(st=>String(st.id)===o.value);o.textContent=x.full_name+' ('+x.email+')'}})
         ruleComp.querySelectorAll('option').forEach(o=>{if(o.value){const x=comps.find(co=>String(co.id)===o.value);o.textContent=x.name+' — '+orgLabel(x)}})
         staffCadre.onchange=()=>{const st=staff.find(x=>String(x.id)===staffCadre.value);cadreSelect.value=st?.cadre_id||''}
         $('#hcot-cadre-create').onclick=async()=>{try{await api('/hcot/cadres',{method:'POST',body:JSON.stringify({name:$('#hcot-cadre-name').value})});toast('Cadre created');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
+        $('#hcot-cadre-manage').onchange=()=>{$('#hcot-cadre-rename').value=cadreLabel($('#hcot-cadre-manage').value)==='Unassigned'?'':cadreLabel($('#hcot-cadre-manage').value)}
+        $('#hcot-cadre-update').onclick=async()=>{const id=$('#hcot-cadre-manage').value,name=$('#hcot-cadre-rename').value.trim();if(!id||!name)return toast('Select a cadre and enter its new name',true);try{await api('/hcot/cadres/'+id,{method:'PATCH',body:JSON.stringify({name})});toast('Cadre renamed; existing staff assignments retained');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
+        $('#hcot-cadre-delete').onclick=async()=>{const id=$('#hcot-cadre-manage').value;if(!id)return toast('Select a cadre',true);if(!confirm('Permanently delete cadre '+cadreLabel(id)+'? This is only allowed when it has no staff or competency mappings.'))return;try{await api('/hcot/cadres/'+id,{method:'DELETE'});toast('Unused cadre deleted');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
         $('#hcot-cadre-save').onclick=async()=>{if(!staffCadre.value)return toast('Select staff',true);try{await api('/hcot/staff/'+staffCadre.value+'/cadre',{method:'PATCH',body:JSON.stringify({cadre_id:cadreSelect.value?Number(cadreSelect.value):null})});toast('Staff cadre updated');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
         const rd=$('#hcot-rule-division'),rdept=$('#hcot-rule-department'),ru=$('#hcot-rule-unit')
         rd.onchange=async()=>{rdept.innerHTML=options(rd.value?(await api('/staff-directory/departments?division='+encodeURIComponent(rd.value))).options||[]:[],'All departments');rdept.disabled=!rd.value;ru.innerHTML=options([],'All units');ru.disabled=true}
         rdept.onchange=async()=>{ru.innerHTML=options(rd.value&&rdept.value?(await api('/staff-directory/units?division='+encodeURIComponent(rd.value)+'&department='+encodeURIComponent(rdept.value))).options||[]:[],'All units');ru.disabled=!rdept.value}
         $('#hcot-rule-create').onclick=async()=>{try{await api('/hcot/cadre-competencies',{method:'POST',body:JSON.stringify({cadre_id:Number($('#hcot-rule-cadre').value),competency_id:Number(ruleComp.value),division:rd.value,department:rdept.value,unit:ru.value})});toast('Cadre competency mapped');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
         $$('.hcot-rule-remove').forEach(btn=>btn.onclick=async()=>{if(!confirm('Remove this cadre competency rule? Staff will no longer inherit it unless another rule applies.'))return;try{await api('/hcot/cadre-competencies/'+btn.dataset.id,{method:'DELETE'});toast('Rule removed');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}})
+      }
+      if(isAdmin){
+        const scopeDivision=$('#hcg-scope-div'),scopeDepartment=$('#hcg-scope-dept'),scopeUnit=$('#hcg-scope-unit')
+        const updateScopeUnits=async()=>{
+          scopeUnit.innerHTML=options(scopeDivision.value&&scopeDepartment.value?(await api('/staff-directory/units?division='+encodeURIComponent(scopeDivision.value)+'&department='+encodeURIComponent(scopeDepartment.value))).options||[]:[],'All units')
+          scopeUnit.disabled=!scopeDepartment.value
+        }
+        scopeDivision.onchange=async()=>{
+          scopeDepartment.innerHTML=options(scopeDivision.value?(await api('/staff-directory/departments?division='+encodeURIComponent(scopeDivision.value))).options||[]:[],'All departments')
+          scopeDepartment.disabled=!scopeDivision.value
+          await updateScopeUnits()
+        }
+        scopeDepartment.onchange=updateScopeUnits
+        $('#hcg-template').onclick=()=>{
+          const csv='\uFEFFgroup_code,competency_group,group_description,competency_name,competency_category,competency_description,cadre,division,department,unit\r\n'
+          const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}))
+          const a=document.createElement('a');a.href=url;a.download='hcot-competency-group-mapping-template.csv';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)
+        }
+        $('#hcg-upload').onclick=async()=>{
+          const file=$('#hcg-upload-file').files?.[0]
+          if(!file){toast('Select a CSV file first.',true);return}
+          if(!/\.csv$/i.test(file.name)){const msg='This importer accepts CSV UTF-8 files only. In Excel, use Save As → CSV UTF-8 (Comma delimited) (*.csv).';$('#hcg-import-result').textContent=msg;toast(msg,true);return}
+          if(file.size>1000000){toast('File exceeds 1 MB.',true);return}
+          const btn=$('#hcg-upload');btn.disabled=true
+          try{
+            const result=await api('/hcot/competency-groups/import',{method:'POST',headers:{'Content-Type':'text/csv'},body:await file.text()})
+            toast('Imported '+result.rows+' rows across '+result.groups+' groups; created '+result.new_competencies+' competencies');renderHCOTSection('competencies')
+          }catch(e){const msg=String(e.message||e);$('#hcg-import-result').textContent=msg;toast(msg,true)}finally{btn.disabled=false}
+        }
+        $('#hcg-create').onclick=async()=>{try{await api('/hcot/competency-groups',{method:'POST',body:JSON.stringify({name:$('#hcg-name').value,group_code:$('#hcg-code').value})});toast('Group created');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
+        $('#hcg-manage-group').onchange=()=>{
+          const g=groups.find(x=>x.id===Number($('#hcg-manage-group').value))
+          $('#hcg-manage-name').value=g?.name||''
+          $('#hcg-manage-description').value=g?.description||''
+        }
+        $('#hcg-save-group').onclick=async()=>{
+          const id=Number($('#hcg-manage-group').value)
+          if(!id){toast('Select a competency group.',true);return}
+          try{await api('/hcot/competency-groups/'+id,{method:'PATCH',body:JSON.stringify({name:$('#hcg-manage-name').value,description:$('#hcg-manage-description').value})});toast('Group updated');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}
+        }
+        $('#hcg-delete-group').onclick=async()=>{
+          const id=Number($('#hcg-manage-group').value),g=groups.find(x=>x.id===id)
+          if(!g){toast('Select a competency group.',true);return}
+          if(!confirm('Delete competency group "'+g.name+'"? Its group memberships and cadre links will be removed. Individual competencies remain in the library.'))return
+          try{await api('/hcot/competency-groups/'+id,{method:'DELETE'});toast('Group deleted');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}
+        }
+        $('#hcg-link-comp').onclick=async()=>{try{await api('/hcot/competency-groups/assign-competency',{method:'POST',body:JSON.stringify({group_id:Number($('#hcg-comp-group').value),competency_id:Number($('#hcg-comp').value)})});toast('Competency added to group');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
+        $('#hcg-link-cadre').onclick=async()=>{try{await api('/hcot/competency-groups/assign-cadre',{method:'POST',body:JSON.stringify({group_id:Number($('#hcg-cadre-group').value),cadre_id:Number($('#hcg-cadre').value),division:$('#hcg-scope-div').value,department:$('#hcg-scope-dept').value,unit:$('#hcg-scope-unit').value})});toast('Group linked to cadre');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
       }
       if(isAdmin){
         const division=$('#hcot-comp-div'),department=$('#hcot-comp-dept'),unit=$('#hcot-comp-unit')
@@ -1046,11 +1316,145 @@ async function renderHCOTSection(section) {
         }catch(e){toast(e.message,true)}})
       }
     }else if(section==='goals'){
-      const data=await api('/hcot/goals')
-      el.innerHTML='<div class="card"><div class="card-head"><h3>Development goals</h3></div><div class="card-body"><label class="field"><span>Goal title</span><input id="hcot-goal-title"></label><label class="field"><span>Scope</span><select id="hcot-goal-scope"><option value="unit">Unit</option><option value="individual">Individual</option></select></label><label class="field"><span>Owner / unit label</span><input id="hcot-goal-owner"></label><label class="field"><span>Target date</span><input type="date" id="hcot-goal-date"></label><label class="field"><span>Measure / KPI</span><input id="hcot-goal-measure"></label><label class="field"><span>Target value</span><input id="hcot-goal-value"></label><button class="btn btn-primary" id="hcot-goal-add">Add draft goal</button></div><div class="table-wrap"><table><thead><tr><th>Goal</th><th>Scope</th><th>Owner</th><th>Target</th></tr></thead><tbody>'+
-        data.goals.map(x=>'<tr><td>'+esc(x.title)+'</td><td>'+esc(x.scope)+'</td><td>'+esc(x.owner_label||'—')+'</td><td>'+esc(x.target_date||'—')+'</td></tr>').join('')+
-        (data.goals.length?'':'<tr><td colspan="4">No goals entered.</td></tr>')+'</tbody></table></div></div>'
-      $('#hcot-goal-add').onclick=async()=>{try{await api('/hcot/goals',{method:'POST',body:JSON.stringify({title:$('#hcot-goal-title').value,scope:$('#hcot-goal-scope').value,owner_label:$('#hcot-goal-owner').value,target_date:$('#hcot-goal-date').value,measure:$('#hcot-goal-measure').value,target_value:$('#hcot-goal-value').value})});toast('Draft goal added');renderHCOTSection('goals')}catch(e){toast(e.message,true)}}
+      const [data,roster,legacy,cadreDirectory]=await Promise.all([api('/hcot/performance-goals'),api('/staff'),api('/hcot/goals'),api('/hcot/cadres')])
+      const staff=roster.staff||[]
+      const goals=data.goals||[],kpis=data.kpis||[],matches=data.matches||[]
+      const competencyTargets=new Map((data.competency_targets||[]).map(t=>[t.staff_id+'|'+t.cycle+'|'+t.competency_id,t.target_score]))
+      const inheritedGoalsTargets=new Map((data.inherited_targets||[]).filter(t=>t.target_score!==undefined).map(t=>[t.staff_id+'|'+t.competency_id,t.target_score]))
+      const goalTarget=(g,m)=>inheritedGoalsTargets.get(g.staff_id+'|'+m.competency_id)??competencyTargets.get(g.staff_id+'|'+g.cycle+'|'+m.competency_id)
+
+      const template='staff_email,goal_title,kpi_title,kpi_target,target_date,assessment_cycle\n'
+      const list=goals.map(g=>{
+        const children=kpis.filter(k=>k.goal_id===g.id)
+        return '<div class="card mt-12 pg-goal-card" data-staff="'+g.staff_id+'" hidden><div class="card-head"><div><h3>'+esc(g.title)+'</h3><p>'+esc(g.full_name)+' · '+esc(g.cycle)+' · '+esc(g.target_date||'No deadline')+'</p></div>'+(data.admin?'<button class="btn btn-sm pg-edit-goal" data-id="'+g.id+'">Edit goal</button>':'')+'</div><div class="card-body">'+
+          (children.length?children.map(k=>{
+            const items=matches.filter(m=>m.kpi_id===k.id)
+            return '<div class="mb-12"><strong>KPI: '+esc(k.title)+'</strong> <span class="tiny muted">Target: '+esc(k.target_value||'—')+'</span>'+(data.admin?'<button class="btn btn-sm pg-edit-kpi" data-id="'+k.id+'">Edit KPI</button>':'')+'<div class="tiny muted">Matched competencies: '+(items.length?items.map(m=>'<span style="display:inline-block;margin:4px;padding:5px;border:1px solid #d3d8e0;border-radius:6px">'+esc(m.competency_name)+' ('+esc(m.status)+')'+(m.status==='approved'?' — Target: '+(goalTarget(g,m)!==undefined?competenceScore(goalTarget(g,m)):'Not configured in Competencies'):'')+''+(data.admin?'<button class="btn btn-sm pg-review" data-kpi="'+k.id+'" data-comp="'+m.competency_id+'" data-status="'+(m.status==='approved'?'rejected':'approved')+'">'+(m.status==='approved'?'Reject':'Approve')+'</button>':'')+'</span>').join(''):'No confident match; HCOT review required')+(data.admin?'<button class="btn btn-sm pg-add-match" data-kpi="'+k.id+'" data-staff="'+g.staff_id+'">Add mapped competency</button>':'')+'</div></div>'
+          }).join(''):'<p>No KPIs entered.</p>')+'</div></div>'
+      }).join('')
+      el.innerHTML='<div class="card"><div class="card-head"><h3>Performance Goals</h3></div><div class="card-body"><p class="tiny muted">Each goal contains its own KPIs. Suggested competencies come exclusively from the staff member’s existing mappings and require HCOT approval before being used for assessment.</p>'+
+        (data.admin?'<label class="field"><span>Staff member</span><select id="pg-staff" class="pg-staff">'+staff.map(x=>'<option value="'+esc(x.email)+'">'+esc(x.full_name)+' — '+esc(x.email)+'</option>').join('')+'</select></label><label class="field"><span>Performance goal</span><input id="pg-goal" maxlength="250" placeholder="Goal title"></label><label class="field"><span>KPI under this goal</span><input id="pg-kpi" maxlength="500" placeholder="Specific measurable KPI"></label><label class="field"><span>KPI target</span><input id="pg-target" maxlength="250"></label><label class="field"><span>Assessment cycle</span><input id="pg-cycle" maxlength="80" placeholder="2026 Annual"></label><label class="field"><span>Target date</span><input id="pg-date" type="date"></label><button class="btn btn-primary" id="pg-add">Add goal / KPI</button><div class="mt-16"><h4>Bulk upload goals and KPIs</h4><p class="tiny muted">CSV UTF-8 with one KPI per row. Reuse the same goal title for multiple KPIs. Invalid imports are rejected before any records are applied.</p><button class="btn" id="pg-template">Download CSV template</button><input type="file" id="pg-file" accept=".csv,text/csv"><button class="btn btn-primary" id="pg-import">Import CSV</button></div>':'')+'</div></div>'+
+        '<div class="card mt-16"><div class="card-head"><h3>Goals and KPIs by staff</h3></div><div class="card-body"><label class="field"><span>Select staff to view goals and KPIs</span><select id="pg-view-staff"><option value="">Select staff member</option>'+staff.map(x=>'<option value="'+x.id+'">'+esc(x.full_name)+' — '+esc(x.email)+'</option>').join('')+'</select></label><p id="pg-view-empty" class="tiny muted">Select a staff member to display their goals and KPIs.</p><div id="pg-goal-results">'+list+'</div></div></div>'+
+        (data.admin?'<div class="card mt-16"><div class="card-head"><h3>Export goals and KPIs</h3></div><div class="card-body"><p class="tiny muted">Choose one filter to export only its matching goals and KPIs. Other filters are not required.</p><label class="field"><span>Export by</span><select id="pg-export-type"><option value="">Select filter</option><option value="staff">Staff</option><option value="division">Division</option><option value="department">Department</option><option value="unit">Unit</option><option value="cadre">Cadre</option></select></label><label class="field"><span>Select value</span><select id="pg-export-value"><option value="">Choose a filter first</option></select></label><button class="btn btn-primary" id="pg-export-run">Export CSV</button></div></div>':'')+
+        ((legacy.goals||[]).length?'<div class="card mt-16"><div class="card-head"><h3>Previous development goals (preserved, read-only)</h3></div><div class="card-body">'+legacy.goals.map(x=>'<p>'+esc(x.title)+' · '+esc(x.measure||'No KPI')+' · '+esc(x.owner_label||'Unassigned')+'</p>').join('')+'</div></div>':'')
+      $('#pg-view-staff').onchange=()=>{
+        const id=$('#pg-view-staff').value
+        let count=0
+        $$('.pg-goal-card').forEach(card=>{card.hidden=!id||card.dataset.staff!==id;if(!card.hidden)count++})
+        $('#pg-view-empty').textContent=id?(count?'':'No goals or KPIs found for this staff member.'):'Select a staff member to display their goals and KPIs.'
+      }
+      if(data.admin){
+        const unique=(key)=>[...new Set(staff.map(x=>String(x[key]??'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b))
+        const exportLists={
+          staff:staff.map(x=>({value:String(x.id),label:x.full_name+' — '+x.email})),
+          division:unique('team').map(x=>({value:x,label:x})),
+          department:unique('role').map(x=>({value:x,label:x})),
+          unit:unique('unit').map(x=>({value:x,label:x})),
+          cadre:(cadreDirectory.cadres||[]).filter(c=>staff.some(x=>Number(x.cadre_id)===Number(c.id))).map(c=>({value:String(c.id),label:c.name}))
+        }
+        $('#pg-export-type').onchange=()=>{
+          const options=exportLists[$('#pg-export-type').value]||[]
+          $('#pg-export-value').innerHTML='<option value="">Select value</option>'+options.map(x=>'<option value="'+esc(x.value)+'">'+esc(x.label)+'</option>').join('')
+        }
+        $('#pg-export-run').onclick=async()=>{
+          const filter=$('#pg-export-type').value,value=$('#pg-export-value').value
+          if(!filter||!value){toast('Select one filter and its value.',true);return}
+          try{
+            const response=await fetch('/api/hcot/performance-goals/export?filter='+encodeURIComponent(filter)+'&value='+encodeURIComponent(value),{credentials:'same-origin'})
+            if(!response.ok){const body=await response.json().catch(()=>({}));throw Error(body.error||'Export failed')}
+            const url=URL.createObjectURL(await response.blob()),link=document.createElement('a')
+            link.href=url;link.download='performance-goals-'+filter+'.csv';document.body.appendChild(link);link.click();link.remove()
+            setTimeout(()=>URL.revokeObjectURL(url),1000)
+          }catch(e){toast(e.message,true)}
+        }
+      }
+      if(data.admin){
+        $$('.pg-staff').forEach(select=>select.setAttribute('aria-label','Select staff member for performance goal'))
+        $('#pg-add').onclick=async()=>{
+          try{
+            const row={staff_email:$('#pg-staff').value,goal_title:$('#pg-goal').value,kpi_title:$('#pg-kpi').value,kpi_target:$('#pg-target').value,assessment_cycle:$('#pg-cycle').value,target_date:$('#pg-date').value}
+            await api('/hcot/performance-goals/import',{method:'POST',body:JSON.stringify({rows:[row]})})
+            toast('KPI saved; competency matches pending review');renderHCOTSection('goals')
+          }catch(e){toast(e.message,true)}
+        }
+        $('#pg-template').onclick=()=>{
+          const blob=new Blob([template],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a')
+          a.href=url;a.download='performance-goals-template.csv';a.click();URL.revokeObjectURL(url)
+        }
+        $('#pg-import').onclick=async()=>{
+          const file=$('#pg-file').files[0]
+          if(!file){toast('Select a CSV file.',true);return}
+          try{
+            const text=await file.text()
+            const lines=[];let current=[],field='',quoted=false
+            for(let i=0;i<text.length;i++){
+              const ch=text[i]
+              if(ch==='"'){if(quoted&&text[i+1]==='"'){field+='"';i++}else quoted=!quoted}
+              else if(ch===','&&!quoted){current.push(field);field=''}
+              else if((ch==='\n'||ch==='\r')&&!quoted){if(ch==='\r'&&text[i+1]==='\n')i++;current.push(field);if(current.some(x=>x.trim()))lines.push(current);current=[];field=''}
+              else field+=ch
+            }
+            if(quoted)throw Error('Unclosed CSV quote')
+            current.push(field);if(current.some(x=>x.trim()))lines.push(current)
+            const expected=['staff_email','goal_title','kpi_title','kpi_target','target_date','assessment_cycle']
+            const headers=(lines.shift()||[]).map(x=>x.trim().replace(/^\uFEFF/,'').toLowerCase())
+            if(expected.some(x=>!headers.includes(x)))throw Error('CSV must contain: '+expected.join(', '))
+            const rows=lines.map(line=>Object.fromEntries(expected.map(key=>[key,line[headers.indexOf(key)]||''])))
+            const result=await api('/hcot/performance-goals/import',{method:'POST',body:JSON.stringify({rows})})
+            toast(result.rows+' KPI rows imported; review suggestions');renderHCOTSection('goals')
+          }catch(e){toast(e.message,true)}
+        }
+        $$('.pg-edit-goal').forEach(btn=>btn.onclick=async()=>{
+          const goal=goals.find(g=>g.id===Number(btn.dataset.id))
+          if(!goal)return
+          const title=prompt('Edit performance goal title',goal.title)
+          if(title===null)return
+          const cycle=prompt('Edit assessment cycle',goal.cycle)
+          if(cycle===null)return
+          const date=prompt('Target date (YYYY-MM-DD or blank)',goal.target_date||'')
+          if(date===null)return
+          try{await api('/hcot/performance-goals/goal/'+goal.id,{method:'PATCH',body:JSON.stringify({title,cycle,target_date:date})});toast('Performance goal updated');renderHCOTSection('goals')}
+          catch(e){toast(e.message,true)}
+        })
+        $$('.pg-edit-kpi').forEach(btn=>btn.onclick=async()=>{
+          const kpi=kpis.find(k=>k.id===Number(btn.dataset.id))
+          if(!kpi)return
+          const title=prompt('Edit KPI description',kpi.title)
+          if(title===null)return
+          const target=prompt('Edit KPI target',kpi.target_value||'')
+          if(target===null)return
+          try{const result=await api('/hcot/performance-goals/kpi/'+kpi.id,{method:'PATCH',body:JSON.stringify({title,target_value:target})});toast(result.review_required?'KPI updated. HCOT must review competency matches again.':'KPI updated');renderHCOTSection('goals')}
+          catch(e){toast(e.message,true)}
+        })
+        $$('.pg-add-match').forEach(btn=>btn.onclick=async()=>{
+          try{
+            const result=await api('/hcot/performance-goals/eligible?staff_id='+Number(btn.dataset.staff))
+            const options=(result.competencies||[]).map(x=>x.id+': '+x.name).join('\\n')
+            const chosen=prompt('Enter the ID of an already mapped competency to approve for this KPI:\\n'+options)
+            if(chosen===null)return
+            const competencyId=Number(chosen)
+            if(!(result.competencies||[]).some(x=>x.id===competencyId))throw Error('Select a valid mapped competency ID.')
+            await api('/hcot/performance-goals/review',{method:'POST',body:JSON.stringify({kpi_id:Number(btn.dataset.kpi),competency_id:competencyId,status:'approved'})})
+            renderHCOTSection('goals')
+          }catch(e){toast(e.message,true)}
+        })
+        $$('.pg-set-target').forEach(btn=>btn.onclick=async()=>{
+          const key=btn.dataset.staff+'|'+btn.dataset.cycle+'|'+btn.dataset.comp
+          const current=competencyTargets.get(key)
+          const entered=prompt('Competency target score (0–100) for this staff member and cycle',current===undefined?'':String(current))
+          if(entered===null)return
+          const target=Number(entered)
+          if(entered.trim()===''||!Number.isInteger(target)||target<0||target>100){toast('Enter a whole-number target score between 0 and 100.',true);return}
+          try{
+            await api('/hcot/performance-goals/competency-target',{method:'PUT',body:JSON.stringify({staff_id:Number(btn.dataset.staff),competency_id:Number(btn.dataset.comp),cycle:btn.dataset.cycle,target_score:target})})
+            toast('Competency target saved: '+target+' ('+competenceLevel(target)+')');renderHCOTSection('goals')
+          }catch(e){toast(e.message,true)}
+        })
+        $$('.pg-review').forEach(btn=>btn.onclick=async()=>{
+          try{await api('/hcot/performance-goals/review',{method:'POST',body:JSON.stringify({kpi_id:Number(btn.dataset.kpi),competency_id:Number(btn.dataset.comp),status:btn.dataset.status})});renderHCOTSection('goals')}
+          catch(e){toast(e.message,true)}
+        })
+      }
     }else if(section==='identity'){
       const [d,m,x,auditApproval]=await Promise.all([api('/hcot/identity-audit'),api('/hcot/mapping-readiness'),api('/hcot/mapping-exceptions'),api('/hcot/mapping-approval-status')])
       el.innerHTML='<div class="card"><div class="card-head"><h3>Staff identity integrity audit</h3></div><div class="card-body"><p>Read-only checks against the existing tracker staff roster. No records are synchronized or modified.</p><p><strong>'+d.verified_links+'</strong> verified staff links · <strong>'+d.participant_records+'</strong> HCOT participant records · <strong>'+d.inactive_participants+'</strong> inactive staff assignments · <strong>'+d.missing_staff+'</strong> missing staff references</p><p>Mapping readiness: '+m.summary.active_verified_links+' active verified links, '+m.summary.unlinked_participants+' unlinked participants, '+m.summary.orphan_links+' orphan links, '+m.summary.inactive_links+' inactive links. Automatic synchronization remains disabled.</p></div><div class="table-wrap"><table><thead><tr><th>Training plan</th><th>Participants</th><th>Unverified links</th><th>Missing staff</th><th>Inactive staff</th></tr></thead><tbody>'+(x.plans||[]).map(p=>'<tr><td>'+esc(p.training_title)+'</td><td>'+p.participants+'</td><td>'+p.unverified+'</td><td>'+p.missing+'</td><td>'+p.inactive+'</td></tr>').join('')+((x.plans||[]).length?'':'<tr><td colspan="5">No HCOT training plans yet.</td></tr>')+'</tbody></table></div></div>'
@@ -1090,11 +1494,122 @@ async function renderHCOTSection(section) {
         data.estimates.map(x=>'<tr><td>'+esc(x.training_title)+'</td><td>'+esc(x.staff_name)+'</td><td>'+esc(x.currency)+'</td><td>'+Number(x.total_amount).toLocaleString()+'</td><td>'+esc(x.status)+'</td></tr>').join('')+
         (data.estimates.length?'':'<tr><td colspan="5">No cost estimates recorded.</td></tr>')+'</tbody></table></div></div>'
     }else if(section==='reviews'){
-      const data=await api('/hcot/plans')
-      el.innerHTML='<div class="card"><div class="card-head"><h3>Supervisor evaluations</h3></div><div class="card-body"><p class="muted">Read-only pending review register. Evaluation submission will be enabled after supervisor identity and permissions are verified.</p><label class="field"><span>Training plan</span><select id="hcot-review-plan"><option value="">Select a plan</option>'+data.plans.map(x=>'<option value="'+x.id+'">'+esc(x.title)+'</option>').join('')+'</select></label><div id="hcot-review-list"></div></div></div>'
+      const [plans,report,managerStaff]=await Promise.all([api('/hcot/plans'),api('/hcot/evaluations/competency-report'),api('/hcot/evaluations/manager-staff')])
+      const assessments=report.assessments||[],managers=report.managers||[],requests=report.requests||[],assignedStaff=managerStaff.assignments||[]
+      const [exportRoster,exportCadres,exportGroups]=await Promise.all([api('/staff'),api('/hcot/cadres'),api('/hcot/competency-groups')])
+      const exportStaff=exportRoster.staff||[],exportCadreRows=exportCadres.cadres||[],exportGroupRows=exportGroups.groups||[]
+      const exportOptions=(items,key,label)=>items.map(x=>'<option value="'+esc(x[key])+'">'+esc(x[label])+'</option>').join('')
+      const uniqueStaff=new Set(assessments.map(x=>x.staff_id)).size
+      const managerOptions=managers.map(x=>'<label class="hce-option"><input type="checkbox" class="hce-manager-choice" value="'+esc(x.manager_email)+'">'+esc(x.manager_email)+' ('+x.staff_count+' staff)</label>').join('')
+      el.innerHTML='<div class="card"><div class="card-head"><h3>Competency assessment outcomes</h3></div><div class="card-body"><p class="tiny muted">All recorded competency assessments across line managers. HCOT administrators can delete an incorrect submission with a required reason; deletions are audited.</p><p><strong>'+assessments.length+'</strong> assessments across <strong>'+uniqueStaff+'</strong> staff</p><label class="field"><span>Search staff, manager, competency or cycle</span><input id="hce-search" placeholder="Search assessment records"></label><div id="hce-results"></div></div></div>'+
+        '<div class="card mt-16"><div class="card-head"><h3>Export competency evaluations</h3></div><div class="card-body"><p class="tiny muted">Export recorded assessments as Excel-compatible CSV. Choose any combination of filters, or leave all blank to export all records (maximum 10,000 rows). Only HCOT administrators can export.</p><div class="grid grid-2"><label class="field"><span>Staff</span><select id="hce-export-staff"><option value="">All staff</option>'+exportOptions(exportStaff,'id','full_name')+'</select></label><label class="field"><span>Division</span><select id="hce-export-division"><option value="">All divisions</option>'+[...new Set(exportStaff.map(x=>x.team).filter(Boolean))].sort().map(x=>'<option value="'+esc(x)+'">'+esc(x)+'</option>').join('')+'</select></label><label class="field"><span>Department</span><select id="hce-export-department"><option value="">All departments</option>'+[...new Set(exportStaff.map(x=>x.role).filter(Boolean))].sort().map(x=>'<option value="'+esc(x)+'">'+esc(x)+'</option>').join('')+'</select></label><label class="field"><span>Cadre</span><select id="hce-export-cadre"><option value="">All cadres</option>'+exportOptions(exportCadreRows,'id','name')+'</select></label><label class="field"><span>Competency group</span><select id="hce-export-group"><option value="">All groups</option>'+exportOptions(exportGroupRows,'id','name')+'</select></label></div><button class="btn btn-primary" id="hce-export-download">Export evaluations (CSV)</button></div></div>'+
+        '<div class="card mt-16"><div class="card-head"><h3>Request line manager assessments</h3></div><div class="card-body"><p class="tiny muted">Creates an in-app assessment request visible to selected line managers in My Staff Assessments. No email is sent.</p><label class="field"><span>Assessment cycle</span><input id="hce-cycle" maxlength="80" placeholder="e.g. 2026 Annual"></label><style>#hce-managers summary,#hce-staff summary{list-style:none;display:block}#hce-managers summary::-webkit-details-marker,#hce-staff summary::-webkit-details-marker{display:none}.hce-option{display:block;padding:9px 12px;cursor:pointer;border-radius:5px}.hce-option:hover{background:#e9f3f2}.hce-option input{position:absolute;opacity:0;width:1px;height:1px}.hce-option:has(input:checked){background:#d7eee9;font-weight:600}.hce-option:has(input:checked)::after{content:" ✓";color:#006b60}</style><div class="field"><label>Line managers (select one or more)</label><details id="hce-managers" style="position:relative"><summary style="cursor:pointer;border:1px solid #bbb;border-radius:6px;padding:10px;list-style:none;display:block">Select line managers</summary><div style="max-height:220px;overflow-y:auto;border:1px solid #bbb;border-radius:6px;padding:6px">'+managerOptions+'</div></details></div><div class="field"><label>Specific staff (optional; select one or more)</label><details id="hce-staff" style="position:relative"><summary style="cursor:pointer;border:1px solid #bbb;border-radius:6px;padding:10px">Select specific staff</summary><div id="hce-staff-options" style="max-height:220px;overflow-y:auto;border:1px solid #bbb;border-radius:6px;padding:6px">Select a line manager first.</div></details></div><p class="tiny muted">Leave staff unselected to request assessments for all staff mapped to the selected managers.</p><button class="btn btn-primary" id="hce-request">Request assessments</button><h4 class="mt-16">Request history</h4><div class="table-wrap"><table><thead><tr><th>Manager</th><th>Cycle</th><th>Requested by</th><th>Staff</th><th>Date</th><th>Status</th></tr></thead><tbody>'+requests.map(x=>'<tr><td>'+esc(x.manager_email)+'</td><td>'+esc(x.cycle)+'</td><td>'+esc(x.requested_by)+'</td><td>'+esc(x.staff_names||'All assigned staff')+'</td><td>'+esc(x.requested_at)+'</td><td>'+esc(x.status)+'</td></tr>').join('')+(requests.length?'':'<tr><td colspan="6">No requests recorded.</td></tr>')+'</tbody></table></div></div></div>'+
+        '<div class="card mt-16"><div class="card-head"><h3>Supervisor training plan evaluations</h3></div><div class="card-body"><label class="field"><span>Training plan</span><select id="hcot-review-plan"><option value="">Select a plan</option>'+plans.plans.map(x=>'<option value="'+x.id+'">'+esc(x.title)+'</option>').join('')+'</select></label><div id="hcot-review-list"></div></div></div>'
+      $('#hce-export-download').onclick=async()=>{
+        const ids={staff_id:'#hce-export-staff',division:'#hce-export-division',department:'#hce-export-department',cadre_id:'#hce-export-cadre',group_id:'#hce-export-group'}
+        const params=new URLSearchParams()
+        for(const [key,selector] of Object.entries(ids)){const value=$(selector).value;if(value)params.set(key,value)}
+        const button=$('#hce-export-download')
+        button.disabled=true
+        try{
+          const result=await api('/hcot/evaluations/export?'+params.toString())
+          const rows=result.rows||[]
+          if(!rows.length){toast('No evaluation records match the selected filters.',true);return}
+          const columns=['assessment_id','staff_id','staff_name','staff_email','division','department','unit','cadre','competency_name','competency_id','cycle','score','score_level','target_score','target_level','score_gap','assessor_email','assessed_at','notes']
+          const safeCell=value=>{
+            let text=String(value??'')
+            if(/^\s*[=+@-]/.test(text))text="'"+text
+            return '"'+text.replace(/"/g,'""')+'"'
+          }
+          const content=[columns.join(','),...rows.map(x=>columns.map(k=>safeCell(k==='score_level'?competenceLevel(x.score):k==='target_level'?competenceLevel(x.target_score):x[k])).join(','))].join('\r\n')
+          const blob=new Blob(['\\uFEFF'+content],{type:'text/csv;charset=utf-8'})
+          const url=URL.createObjectURL(blob)
+          const a=document.createElement('a')
+          a.href=url;a.download='hcot-evaluations-'+new Date().toISOString().slice(0,10)+'.csv'
+          document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)
+          toast('Exported '+rows.length+' evaluation records'+(rows.length===result.max_rows?' (row limit reached)':''))
+        }catch(e){toast(e.message,true)}finally{button.disabled=false}
+      }
+      const showAssessments=()=>{
+        const q=$('#hce-search').value.trim().toLowerCase()
+        const visible=assessments.filter(x=>[x.full_name,x.staff_email,x.assessor_email,x.competency_name,x.cycle].some(v=>String(v||'').toLowerCase().includes(q)))
+        $('#hce-results').innerHTML='<div class="table-wrap"><table><thead><tr><th>Staff</th><th>Competency</th><th>Cycle</th><th>Score / Competence level</th><th>Target / Competence level</th><th>Gap</th><th>Line manager</th><th>Assessed</th><th>Notes</th><th>Action</th></tr></thead><tbody>'+visible.map(x=>'<tr><td>'+esc(x.full_name)+' ('+esc(x.staff_email)+')</td><td>'+esc(x.competency_name)+'</td><td>'+esc(x.cycle)+'</td><td>'+competenceScore(x.score)+'</td><td>'+competenceScore(x.target_score)+'</td><td>'+x.score_gap+'</td><td>'+esc(x.assessor_email)+'</td><td>'+esc(x.assessed_at)+'</td><td>'+esc(x.notes||'')+'</td><td><button class="btn btn-sm hce-delete-assessment" data-id="'+x.id+'">Delete</button></td></tr>').join('')+(visible.length?'':'<tr><td colspan="10">No matching assessments.</td></tr>')+'</tbody></table></div>'
+      }
+      $('#hce-results').onclick=async event=>{
+        const btn=event.target.closest('.hce-delete-assessment')
+        if(!btn)return
+        const item=assessments.find(x=>x.id===Number(btn.dataset.id))
+        if(!item)return
+        if(!confirm('Delete assessment for '+item.full_name+' — '+item.competency_name+' ('+item.cycle+')? This changes competency and group scores.'))return
+        const reason=prompt('Reason for deleting this assessment (required, minimum 5 characters):')
+        if(reason===null)return
+        if(reason.trim().length<5){toast('Enter a deletion reason of at least 5 characters.',true);return}
+        try{
+          await api('/hcot/evaluations/competency-assessments/'+item.id,{method:'DELETE',body:JSON.stringify({reason:reason.trim()})})
+          toast('Assessment deleted; group averages will be recalculated')
+          renderHCOTSection('reviews')
+        }catch(e){toast(e.message,true)}
+      }
+      $('#hce-search').oninput=showAssessments
+      showAssessments()
+      const selectedManagers=()=>Array.from(el.querySelectorAll('.hce-manager-choice:checked')).map(x=>x.value)
+      const selectedStaff=()=>Array.from(el.querySelectorAll('.hce-staff-choice:checked')).map(x=>Number(x.value))
+      const refreshStaff=()=>{
+        const chosen=new Set(selectedManagers().map(x=>x.toLowerCase()))
+        const selected=new Set(selectedStaff())
+        const available=assignedStaff.filter(x=>chosen.has(String(x.manager_email).toLowerCase()))
+        const distinct=new Map(available.map(x=>[String(x.staff_id),x]))
+        $('#hce-staff-options').innerHTML=distinct.size?Array.from(distinct.values()).map(x=>'<label class="hce-option"><input type="checkbox" class="hce-staff-choice" value="'+x.staff_id+'"'+(selected.has(Number(x.staff_id))?' checked':'')+'>'+esc(x.full_name)+' — '+esc(x.manager_email)+'</label>').join(''):'<p class="tiny muted">Select a line manager first.</p>'
+        $('#hce-managers').querySelector('summary').textContent=chosen.size?chosen.size+' line manager(s) selected':'Select line managers'
+        refreshStaffLabel()
+      }
+      const refreshStaffLabel=()=>{
+        const count=selectedStaff().length
+        $('#hce-staff').querySelector('summary').textContent=count?count+' staff selected':'Select specific staff (optional)'
+      }
+      $('#hce-managers').addEventListener('change',refreshStaff)
+      $('#hce-staff').addEventListener('change',refreshStaffLabel)
+      refreshStaff()
+      $('#hce-request').onclick=async()=>{
+        const cycle=$('#hce-cycle').value.trim()
+        const manager_emails=selectedManagers()
+        const staff_ids=selectedStaff()
+        if(!cycle||!manager_emails.length){toast('Enter a cycle and select at least one manager.',true);return}
+        try{const r=await api('/hcot/evaluations/assessment-requests',{method:'POST',body:JSON.stringify({cycle,manager_emails,staff_ids})});toast('Created '+r.created+' assessment requests');renderHCOTSection('reviews')}catch(e){toast(e.message,true)}
+      }
       $('#hcot-review-plan').onchange=async()=>{const id=Number($('#hcot-review-plan').value);if(!id)return;const result=await api('/hcot/reviews?plan_id='+id);$('#hcot-review-list').innerHTML='<div class="table-wrap"><table><thead><tr><th>Staff</th><th>Review status</th></tr></thead><tbody>'+result.reviews.map(x=>'<tr><td>'+esc(x.full_name)+'</td><td>'+esc(x.status||'Pending')+'</td></tr>').join('')+'</tbody></table></div>'}
+
     }
   }catch(e){el.innerHTML='<div class="notice notice-bad">'+esc(e.message)+'</div>'}
+}
+
+/* Dedicated line-manager entry point. The assessment API independently verifies
+   the signed-in manager and their staff assignments on every request. */
+function competenceLevel(value){
+  const score=Number(value)
+  if(!Number.isFinite(score)||score<0||score>100)return 'Not rated'
+  return score<50?'No Competence':score<65?'Basic':score<75?'Intermediate':score<85?'Advanced':'Expert'
+}
+function competenceScore(value){return esc(String(value))+' ('+competenceLevel(value)+')'}
+
+async function renderSupervisorGateway(el){
+  const session=await api('/hcot/access-session')
+  const isAdmin=session.role==='admin'
+  const roster=await api('/hcot/line-manager/my-staff').catch(e=>{
+    if(isAdmin)return {staff:[]}
+    throw e
+  })
+  const staff=roster.staff||[]
+  if(!isAdmin&&!staff.length){
+    el.innerHTML='<div class="notice notice-warn">You do not currently have any staff mapped to you as a line manager. Contact HCOT to arrange an assignment.</div>'
+    return
+  }
+  if(isAdmin&&!staff.length){
+    el.innerHTML='<div class="card"><div class="card-body"><h3>Line Managers/Supervisors</h3><p>This gateway is for line-manager assessment activities. Your HCOT administrator tools remain available under HCOT Training Monitor.</p><p>No staff are currently mapped to your account as a line manager.</p><a class="btn" href="#/hcot">Open HCOT Training Monitor</a></div></div>'
+    return
+  }
+  el.innerHTML='<div class="card"><div class="card-head"><h3>My Staff Assessments</h3></div><div class="card-body"><p>Assess competencies for staff assigned to you and review HCOT assessment requests. Only your mapped staff are accessible.</p><p><strong>'+staff.length+'</strong> assigned staff member(s)</p></div></div><div id="hcot-extra" class="mt-16"></div>'
+  await renderHCOTSection('assessments')
 }
 
 /* HCOT unified module: draft planning only until security and synchronization are validated. */
@@ -1102,9 +1617,11 @@ async function renderHCOT(el) {
   const session=await api('/hcot/access-session')
   const isAdmin=session.role==='admin'
   if(!isAdmin){
+    const managerAccess=await api('/hcot/line-manager/my-staff').then(x=>Array.isArray(x.staff)&&x.staff.length>0).catch(()=>false)
+    if(managerAccess){el.innerHTML='<div class="card"><div class="card-body"><h3>Line Managers/Supervisors</h3><p>Line-manager assessments have moved to their dedicated gateway.</p><a class="btn btn-primary" href="#/supervisors">Open Line Managers/Supervisors</a></div></div>';return}
     const data=await api('/hcot/plans')
     const plans=data.plans||[]
-    el.innerHTML='<div class="card"><div class="card-body"><p>Read-only HCOT access. Training plan changes require administrator permission.</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn hcot-tab" data-section="calendar">Calendar</button><button class="btn hcot-tab" data-section="competencies">Competencies</button></div></div></div><div id="hcot-extra" class="mt-16"></div>'+
+    el.innerHTML='<div class="card"><div class="card-body"><p>Read-only HCOT access. Training plan changes require administrator permission.</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn hcot-tab" data-section="calendar">Training Plan</button><button class="btn hcot-tab" data-section="competencies">Competencies</button></div></div></div><div id="hcot-extra" class="mt-16"></div>'+
       '<div class="card mt-16"><div class="card-head"><h3>HCOT training plans — read only</h3></div><div class="table-wrap"><table><thead><tr><th>Training</th><th>Dates</th><th>Location</th><th>Participants</th></tr></thead><tbody>'+
       plans.map(p=>'<tr><td>'+esc(p.title)+'</td><td>'+esc(p.start_date||'—')+' – '+esc(p.end_date||'—')+'</td><td>'+esc(p.location||'—')+'</td><td>'+p.participant_count+'</td></tr>').join('')+
       (plans.length?'':'<tr><td colspan="4">No training plans yet.</td></tr>')+'</tbody></table></div></div>'
@@ -1112,12 +1629,13 @@ async function renderHCOT(el) {
     renderHCOTSection('calendar')
     return
   }
+  const adminUtilities='<div class="card mt-16"><div class="card-head"><h3>Administration</h3><p>Standalone administrative tools</p></div><div class="card-body"><div style="display:flex;gap:10px;flex-wrap:wrap"><a class="btn" href="#/settings">Settings</a><a class="btn" href="#/setup">Forms Connection</a><a class="btn" href="#/roster">Staff Roster</a></div></div></div>'
   const [data,roster]=await Promise.all([api('/hcot/plans'),api('/staff')])
   const plans=data.plans||[],staff=roster.staff||[]
-  el.innerHTML='<div class="card"><div class="card-body"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn hcot-tab" data-section="calendar">Calendar</button><button class="btn hcot-tab" data-section="competencies">Competencies</button><button class="btn hcot-tab" data-section="goals">Goals & KPIs</button><button class="btn hcot-tab" data-section="reviews">Evaluations</button><button class="btn hcot-tab" data-section="costing">Costing</button><button class="btn hcot-tab" data-section="handshake">Tracker handshake</button><button class="btn hcot-tab" data-section="identity">Staff identity audit</button></div></div></div><div id="hcot-extra" class="mt-16"></div><div id="hcot-calendar-planning"><div class="card mt-16"><div class="card-head"><div><h3>HCOT Training Monitor — Training planning</h3><p>Unified workspace preview. Draft plans do not automatically create report assignments.</p></div></div><div class="card-body"><label class="field"><span>Training programme title</span><input id="hcot-title" placeholder="Enter training title"></label><div class="grid grid-2"><label class="field"><span>Start date</span><input id="hcot-start" type="date"></label><label class="field"><span>End date</span><input id="hcot-end" type="date"></label></div><label class="field"><span>Location</span><input id="hcot-location"></label><label class="field"><span>Provider</span><input id="hcot-provider"></label><button class="btn btn-primary" id="hcot-create">Create draft training plan</button></div></div>'+
-  '<div class="card mt-16"><div class="card-head"><h3>HCOT draft training plans</h3></div><div class="table-wrap"><table><thead><tr><th>Training</th><th>Dates</th><th>Location</th><th>Participants</th><th></th></tr></thead><tbody>'+
-  plans.map(p=>'<tr><td>'+esc(p.title)+'</td><td>'+esc(p.start_date||'—')+' – '+esc(p.end_date||'—')+'</td><td>'+esc(p.location||'—')+'</td><td>'+p.participant_count+'</td><td>'+(p.status==='draft'?'<button class="btn btn-sm hcot-edit" data-id="'+p.id+'">Edit draft</button> ':'')+'<button class="btn btn-sm hcot-manage" data-id="'+p.id+'">Manage participants</button></td></tr>').join('')+
-  (plans.length?'':'<tr><td colspan="5">No draft training plans yet.</td></tr>')+'</tbody></table></div></div><div id="hcot-participants" class="mt-16"></div></div>'
+  el.innerHTML=adminUtilities+'<div class="card"><div class="card-body"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn hcot-tab" data-section="calendar">Training Plan</button><button class="btn hcot-tab" data-section="competencies">Competencies</button><button class="btn hcot-tab" data-section="line-managers">Line Manager Mapping</button><button class="btn hcot-tab" data-section="assessments">My Staff Assessments</button><button class="btn hcot-tab" data-section="goals">Performance Goals</button><button class="btn hcot-tab" data-section="reviews">Evaluations</button><button class="btn hcot-tab" data-section="costing">Costing</button><button class="btn hcot-tab" data-section="handshake">Tracker handshake</button><button class="btn hcot-tab" data-section="identity">Staff identity audit</button></div></div></div><div id="hcot-extra" class="mt-16"></div><div id="hcot-calendar-planning"><div class="card mt-16"><div class="card-head"><div><h3>Training Plan — Planning and Approval</h3><p>Approve a plan to automatically assign its participants in Programme Assignments.</p></div></div><div class="card-body"><label class="field"><span>Training programme title</span><input id="hcot-title" placeholder="Enter training title"></label><div class="grid grid-2"><label class="field"><span>Start date</span><input id="hcot-start" type="date"></label><label class="field"><span>End date</span><input id="hcot-end" type="date"></label></div><label class="field"><span>Location</span><input id="hcot-location"></label><label class="field"><span>Provider</span><input id="hcot-provider"></label><button class="btn btn-primary" id="hcot-create">Create draft training plan</button></div></div>'+
+  '<div class="card mt-16"><div class="card-head"><h3>Training plans</h3></div><div class="table-wrap"><table><thead><tr><th>Training</th><th>Dates</th><th>Location</th><th>Participants</th><th>Approval status</th><th></th></tr></thead><tbody>'+
+  plans.map(p=>'<tr><td>'+esc(p.title)+'</td><td>'+esc(p.start_date||'—')+' – '+esc(p.end_date||'—')+'</td><td>'+esc(p.location||'—')+'</td><td>'+p.participant_count+'</td><td><select class="hcot-approval" data-id="'+p.id+'" '+(p.status==='approved'?'disabled':'')+'><option value="Pending Approval" '+(p.status!=='approved'?'selected':'')+'>Pending Approval</option><option value="Approved" '+(p.status==='approved'?'selected':'')+'>Approved</option></select></td><td><button class="btn btn-sm hcot-export-plan" data-id="'+p.id+'">Export CSV</button> '+(p.status==='draft'?'<button class="btn btn-sm hcot-edit" data-id="'+p.id+'">Edit draft</button> <button class="btn btn-sm hcot-delete" data-id="'+p.id+'">Delete draft</button> ':'')+'<button class="btn btn-sm hcot-manage" data-id="'+p.id+'">Manage participants</button></td></tr>').join('')+
+  (plans.length?'':'<tr><td colspan="6">No training plans yet.</td></tr>')+'</tbody></table></div></div><div id="hcot-participants" class="mt-16"></div></div>'
   $$('.hcot-tab').forEach(btn=>btn.onclick=()=>renderHCOTSection(btn.dataset.section))
   renderHCOTSection('calendar')
   $('#hcot-create').onclick=async()=>{
@@ -1126,6 +1644,32 @@ async function renderHCOT(el) {
       toast('Draft training plan created');renderHCOT(el)
     }catch(e){toast(e.message,true)}
   }
+  $$('.hcot-approval').forEach(select=>select.onchange=async()=>{
+    const id=Number(select.dataset.id),previous=plans.find(p=>p.id===id)?.status==='approved'?'Approved':'Pending Approval'
+    if(select.value==='Approved'&&!confirm('Approve this plan and assign all participants in Programme Assignments for the active reporting period?')){select.value=previous;return}
+    select.disabled=true
+    try{const r=await api('/hcot/plans/'+id+'/approval',{method:'PATCH',body:JSON.stringify({approval_status:select.value})});toast('Approval status: '+r.approval_status);renderHCOT(el)}
+    catch(e){select.value=previous;select.disabled=false;toast(e.message,true)}
+  })
+  $$('.hcot-export-plan').forEach(btn=>btn.onclick=async()=>{
+    try{
+      const response=await fetch('/api/hcot/plans/'+btn.dataset.id+'/export',{credentials:'same-origin'})
+      if(!response.ok){const body=await response.json().catch(()=>({}));throw new Error(body.error||'Export failed')}
+      const blob=await response.blob(),url=URL.createObjectURL(blob),a=document.createElement('a')
+      a.href=url;a.download='hcot-training-plan-'+btn.dataset.id+'.csv';document.body.appendChild(a);a.click();a.remove()
+      setTimeout(()=>URL.revokeObjectURL(url),1000)
+    }catch(e){toast(e.message,true)}
+  })
+  $$('.hcot-delete').forEach(btn=>btn.onclick=async()=>{
+    const plan=plans.find(p=>p.id===Number(btn.dataset.id))
+    if(!plan||plan.status!=='draft')return
+    if(!window.confirm('Permanently delete draft training plan "'+plan.title+'"? Assigned participants will be removed. This cannot be undone.'))return
+    try{
+      await api('/hcot/plans/'+plan.id,{method:'DELETE'})
+      toast('Draft training plan deleted')
+      renderHCOT(el)
+    }catch(e){toast(e.message,true)}
+  })
   $$('.hcot-edit').forEach(btn=>btn.onclick=()=>{
     const plan=plans.find(p=>p.id===Number(btn.dataset.id))
     if(!plan || plan.status!=='draft')return
@@ -1218,9 +1762,19 @@ async function renderRoster(el) {
 
   $('#topbar-actions').innerHTML = `
     <button class="btn" id="r-directory">Manage divisions, departments & units</button>
+    <button class="btn" id="r-template">Download bulk-load template</button>
      <button class="btn" id="r-import">${ico('upload', 15)} Import list</button>
     <button class="btn btn-primary" id="r-add">${ico('plus', 15)} Add staff member</button>`
 
+  $('#r-template').addEventListener('click', () => {
+    const csv='\uFEFFfull_name,email,division,department,unit,cadre\r\n'
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8'})
+    const url=URL.createObjectURL(blob)
+    const link=document.createElement('a')
+    link.href=url;link.download='hcot-staff-roster-bulk-template.csv'
+    document.body.appendChild(link);link.click();link.remove()
+    URL.revokeObjectURL(url)
+  })
   $('#r-add').addEventListener('click', () => staffModal())
   $('#r-import').addEventListener('click', () => rosterImportModal())
   $('#r-directory').addEventListener('click', () => staffDirectoryModal())
@@ -1389,7 +1943,7 @@ function rosterImportModal() {
   const m = modal({
     title: 'Import staff list',
     body: `
-      <p class="tiny muted mb-12">Paste a CSV, or upload a file. It needs a <strong>name</strong> column and an <strong>email</strong> column; <em>division</em> and <em>department</em> columns are optional.</p>
+      <p class="tiny muted mb-12">Paste a CSV, or upload a file. It needs <strong>full_name</strong> and <strong>email</strong> columns; <em>division</em>, <em>department</em>, <em>unit</em> and <em>cadre</em> are optional. Division/department/unit values must already exist in the staff directory; cadre names must match active HCOT cadres.</p>
       <div class="row mb-12" style="gap:8px">
         <button class="btn btn-sm" id="pick-file">Choose file…</button>
         <span class="tiny muted" id="file-label">No file chosen</span>
@@ -1421,7 +1975,21 @@ David Okafor,david.okafor@example.org,Mathematics"></textarea>
         body: text,
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Import failed')
+      if (!res.ok) {
+        const details = Array.isArray(data.problems) ? data.problems.slice(0, 25).join('\\n') : ''
+        throw new Error((data.error || 'Import failed') + (details ? '\\n' + details : ''))
+      }
+      const problems = Array.isArray(data.problems) ? data.problems : []
+      const skipped = Number(data.skipped) || 0
+      if (skipped || problems.length) {
+        const detail = problems.slice(0, 25).join('\\n')
+        const message = `Imported: ${data.count || 0}; skipped: ${skipped}.` +
+          (detail ? `\\n\\nReasons:\\n${detail}` : '')
+        // Keep the import dialog and original CSV open so invalid rows can be corrected.
+        alert(message)
+        if (data.count) navigate('roster', true)
+        return
+      }
       m.close()
       toast(`${data.count} staff member${data.count === 1 ? '' : 's'} imported`)
       navigate('roster', true)

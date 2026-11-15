@@ -1,0 +1,64 @@
+name: Repair HCOT Preview mapping target table (Preview D1 only)
+on:
+  push:
+    branches:
+      - feature/hcot-competency-assessment
+    paths:
+      - .github/workflows/hcot-preview-mapping-targets-repair.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: hcot-preview-d1-migration
+  cancel-in-progress: false
+jobs:
+  migrate-preview-only:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Preview feature branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install Wrangler
+        run: npm ci
+      - name: Verify isolated Preview D1 and production branch before any writes
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT_NAME: ${{ vars.CLOUDFLARE_PAGES_PROJECT_NAME }}
+        run: |
+          set -euo pipefail
+          test "$PROJECT_NAME" = "training-report-submission-tracker"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test "$(node -e "console.log(JSON.parse(require('fs').readFileSync('wrangler.jsonc','utf8')).env.preview.d1_databases[0].database_id)")" = "26b2a079-accf-4d05-bf1c-c1e8ca523e1e"
+          test "$(node -e "console.log(JSON.parse(require('fs').readFileSync('wrangler.jsonc','utf8')).env.preview.d1_databases[0].database_name)")" = "report-tracker-hcot-preview"
+          curl --fail --silent --show-error -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT_NAME" > /tmp/project.json
+          jq -e '.success == true and .result.production_branch == "main"' /tmp/project.json >/dev/null
+          jq -e --arg id "26b2a079-accf-4d05-bf1c-c1e8ca523e1e" '.result.deployment_configs.preview.d1_databases.DB as $d | ($d != null) and (($d.id // $d.database_id // "") == $id)' /tmp/project.json >/dev/null
+      - name: Capture Preview D1 Time Travel recovery point
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx wrangler d1 time-travel info DB --env preview
+      - name: Apply additive mapping target migration to Preview D1 only
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute DB --env preview --remote --file migrations/0003_hcot_mapping_competency_targets.sql
+      - name: Verify new table exists in Preview D1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute DB --env preview --remote --command "SELECT name FROM sqlite_master WHERE type='table' AND name='hcot_mapping_competency_targets';"
