@@ -259,10 +259,11 @@ function navigate(view, initial) {
 
   const el = $('#view')
   el.innerHTML = `<div class="empty"><p class="muted">Loading…</p></div>`
-  if(['roster','setup','settings'].includes(view) && state.hcotRole==='admin'){
-    $('#topbar-actions').innerHTML='<a class="btn" href="#/hcot">Back to Admin Controls</a>'
-  }
-  Promise.resolve(route.render(el)).catch((e) => {
+  Promise.resolve(route.render(el)).then(()=>{
+    if(['roster','setup','settings'].includes(view) && state.hcotRole==='admin' && state.view===view){
+      $('#topbar-actions').insertAdjacentHTML('afterbegin','<a class="btn" href="#/hcot">Back to Admin Controls</a>')
+    }
+  }).catch((e) => {
     if (e.message === 'locked') return
     el.innerHTML = `<div class="notice notice-bad"><span class="nicon">${ico('alert')}</span><div><strong>Could not load this page</strong>${esc(e.message)}</div></div>`
   })
