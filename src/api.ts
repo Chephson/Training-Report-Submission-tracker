@@ -715,6 +715,23 @@ api.patch('/programmes/:id', async (c) => {
   return c.json({ok:true,updated_submissions:updated.meta.changes||0})
 })
 
+api.delete('/programmes/:id',async c=>{
+  const actor=await verifyAccessJwt(c.req.raw,c.env)
+  if(!actor||!(await isHcotCompetencyAdmin(c,actor.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const id=Number(c.req.param('id'))
+  if(!Number.isSafeInteger(id)||id<=0)return c.json({error:'Invalid programme ID.'},400)
+  const programme=await c.env.DB.prepare('SELECT id,name FROM programmes WHERE id=?').bind(id).first<{id:number;name:string}>()
+  if(!programme)return c.json({error:'Programme not found.'},404)
+  const linked=await c.env.DB.prepare("SELECT id FROM hcot_training_plans WHERE status='approved' AND LOWER(TRIM(title))=LOWER(TRIM(?)) LIMIT 1").bind(programme.name).first()
+  if(linked)return c.json({error:'Cannot delete a programme linked to an approved HCOT training plan.'},409)
+  const assigned=await c.env.DB.prepare('SELECT COUNT(*) AS total FROM programme_assignments WHERE programme_id=?').bind(id).first<{total:number}>()
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM programme_assignments WHERE programme_id=?').bind(id),
+    c.env.DB.prepare('DELETE FROM programmes WHERE id=?').bind(id)
+  ])
+  await log(c.env.DB,'programme.deleted','Programme #'+id+': '+programme.name+'; assignments removed: '+(assigned?.total||0),actor.email)
+  return c.json({ok:true,removed_assignments:assigned?.total||0})
+})
 api.post('/programme-assignments/import', async (c) => {
   const periodId=Number(c.req.query('period')) || (await defaultPeriod(c.env.DB))?.id || 0
   const period=await c.env.DB.prepare('SELECT id FROM periods WHERE id=?').bind(periodId).first()
