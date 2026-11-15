@@ -20,3 +20,12 @@ test('evaluations UI exports UTF-8 CSV with filters and qualitative levels',()=>
  assert.match(ui,/competenceLevel\(x.score\)/)
  assert.match(ui,/competenceLevel\(x.target_score\)/)
 })
+
+test('numeric single-filter IDs are accepted and CSV contains real record separators',()=>{
+ const exportApi=api.slice(api.indexOf("api.get('/hcot/evaluations/export'"),api.indexOf("/* HCOT Evaluations:"))
+ assert.ok(exportApi.includes(String.raw`/^\\d+$/`)===false,'must not double-escape digit matcher')
+ assert.ok(exportApi.includes(String.raw`/^\d+$/`),'numeric ID validator uses digit matcher')
+ assert.ok(ui.includes(String.raw`join('\\r\\n')`)===false,'must not output literal backslash-r-n')
+ assert.ok(ui.includes(String.raw`join('\r\n')`),'CSV rows use CRLF')
+ assert.ok(ui.includes(String.raw`'\uFEFF'`),'CSV uses UTF-8 BOM')
+});
