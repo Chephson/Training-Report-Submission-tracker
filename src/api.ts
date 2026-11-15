@@ -905,6 +905,52 @@ api.patch('/hcot/plans/:id', async c => {
   await log(c.env.DB,'hcot.plan.updated',`Training plan #${id}`,actor!.email)
   return c.json({ok:true})
 })
+api.patch('/hcot/plans/:id/approval',async c=>{
+  const actor=await verifyAccessJwt(c.req.raw,c.env)
+  if(!actor||!(await isHcotCompetencyAdmin(c,actor.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const id=Number(c.req.param('id'))
+  const b=await c.req.json<{approval_status?:string}>().catch(()=>({}))
+  if(!Number.isSafeInteger(id)||id<=0||!['Pending Approval','Approved'].includes(String(b.approval_status)))return c.json({error:'Select Pending Approval or Approved.'},400)
+  const plan=await c.env.DB.prepare('SELECT id,title,status FROM hcot_training_plans WHERE id=?').bind(id).first<{id:number;title:string;status:string}>()
+  if(!plan)return c.json({error:'Training plan not found.'},404)
+  if(b.approval_status==='Pending Approval'){
+    if(plan.status==='approved')return c.json({error:'Approved training plans cannot be reverted without a formal reversal workflow.'},409)
+    return c.json({ok:true,approval_status:'Pending Approval'})
+  }
+  if(plan.status==='approved')return c.json({ok:true,approval_status:'Approved',already_approved:true})
+  if(plan.status!=='draft')return c.json({error:'Only pending draft plans can be approved.'},409)
+  const period=await defaultPeriod(c.env.DB)
+  if(!period)return c.json({error:'Configure an active reporting period before approving a plan.'},409)
+  const participants=await c.env.DB.prepare(`SELECT hp.staff_id,st.active FROM hcot_participants hp JOIN staff st ON st.id=hp.staff_id WHERE hp.plan_id=?`).bind(id).all<{staff_id:number;active:number}>()
+  if(!participants.results.length)return c.json({error:'Assign participants before approving this training plan.'},409)
+  if(participants.results.some(p=>Number(p.active)!==1))return c.json({error:'Plan includes inactive staff. Correct participants before approval.'},409)
+  const existing=await c.env.DB.prepare('SELECT id FROM programmes WHERE LOWER(TRIM(name))=LOWER(TRIM(?))').bind(plan.title).first<{id:number}>()
+  // Existing programmes may already have independent assignments; merge without removing any.
+  const writes=[]
+  if(!existing)writes.push(c.env.DB.prepare('INSERT OR IGNORE INTO programmes(name) VALUES (?)').bind(plan.title))
+  for(const p of participants.results)writes.push(c.env.DB.prepare(`INSERT OR IGNORE INTO programme_assignments(programme_id,staff_id,period_id)
+    SELECT id,?,? FROM programmes WHERE LOWER(TRIM(name))=LOWER(TRIM(?))`).bind(p.staff_id,period.id,plan.title))
+  writes.push(c.env.DB.prepare("UPDATE hcot_training_plans SET status='approved',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='draft'").bind(id))
+  try{await c.env.DB.batch(writes)}catch(e){return c.json({error:'Approval and programme synchronization failed. No changes applied.'},409)}
+  await log(c.env.DB,'hcot.plan.approved','Training plan #'+id+' synchronized to programme assignments for period #'+period.id,actor.email)
+  return c.json({ok:true,approval_status:'Approved',participants:participants.results.length,period_id:period.id})
+})
+api.get('/hcot/plans/:id/export',async c=>{
+  const actor=await verifyAccessJwt(c.req.raw,c.env)
+  if(!actor||!(await isHcotCompetencyAdmin(c,actor.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const id=Number(c.req.param('id'))
+  if(!Number.isSafeInteger(id)||id<=0)return c.json({error:'Invalid training plan ID.'},400)
+  const plan=await c.env.DB.prepare('SELECT * FROM hcot_training_plans WHERE id=?').bind(id).first<any>()
+  if(!plan)return c.json({error:'Training plan not found.'},404)
+  const participants=await c.env.DB.prepare(`SELECT st.full_name,st.email,st.division,st.department,st.unit FROM hcot_participants hp JOIN staff st ON st.id=hp.staff_id WHERE hp.plan_id=? ORDER BY st.full_name`).bind(id).all<any>()
+  const quote=(v:any)=>'"'+String(v??'').replace(/"/g,'""')+'"'
+  const header=['Training Plan ID','Training Programme','Approval Status','Start Date','End Date','Location','Provider','Notes','Participant','Email','Division','Department','Unit']
+  const rows=(participants.results.length?participants.results:[{}]).map((p:any)=>[id,plan.title,plan.status==='approved'?'Approved':'Pending Approval',plan.start_date,plan.end_date,plan.location,plan.provider,plan.notes,p.full_name,p.email,p.division,p.department,p.unit])
+  const csv='\uFEFF'+[header,...rows].map(row=>row.map(quote).join(',')).join('\r\n')+'\r\n'
+  c.header('Content-Type','text/csv; charset=utf-8')
+  c.header('Content-Disposition','attachment; filename="hcot-training-plan-'+id+'.csv"')
+  return c.body(csv)
+})
 api.delete('/hcot/plans/:id', async c => {
   const id=Number(c.req.param('id'))
   if(!Number.isSafeInteger(id)||id<=0)return c.json({error:'Invalid training plan ID.'},400)
