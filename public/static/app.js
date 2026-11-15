@@ -913,7 +913,7 @@ async function renderProgrammes(el) {
     $('#pg-rename-save').onclick=async()=>{try{await api('/programmes/'+$('#pg-rename-id').value,{method:'PATCH',body:JSON.stringify({name:$('#pg-rename-name').value})});toast('Programme name updated');renderProgrammes(el)}catch(e){toast(e.message,true)}}
   }
   $('#pg-tab-import').click()
-  $('#pg-staff-search').oninput=e=>{const q=e.target.value.trim().toLowerCase();$$$('.pg-staff').forEach(x=>{const row=x.closest('label');row.style.display=row.textContent.toLowerCase().includes(q)?'block':'none'})}
+  $('#pg-staff-search').oninput=e=>{const q=e.target.value.trim().toLowerCase();$$$$('.pg-staff').forEach(x=>{const row=x.closest('label');row.style.display=row.textContent.toLowerCase().includes(q)?'block':'none'})}
   $('#pg-add').onclick=async()=>{try{await api('/programmes',{method:'POST',body:JSON.stringify({name:$('#pg-name').value.trim()})});toast('Programme created');renderProgrammes(el)}catch(e){toast(e.message,true)}}
   $('#pg-assign').onclick=async()=>{const programme_id=Number($('#pg-choice').value),staff_ids=Array.from(document.querySelectorAll('.pg-staff')).filter(x=>x.checked).map(x=>Number(x.value));try{const r=await api('/programme-assignments',{method:'POST',body:JSON.stringify({programme_id,staff_ids,period_id:period})});toast(r.added+' staff assignments added');renderProgrammes(el)}catch(e){toast(e.message,true)}}
   document.querySelectorAll('.pg-delete').forEach(btn=>btn.onclick=async()=>{
@@ -1329,7 +1329,7 @@ async function renderHCOTSection(section) {
       $('#pg-view-staff').onchange=()=>{
         const id=$('#pg-view-staff').value
         let count=0
-        $('.pg-goal-card').forEach(card=>{card.hidden=!id||card.dataset.staff!==id;if(!card.hidden)count++})
+        $$('.pg-goal-card').forEach(card=>{card.hidden=!id||card.dataset.staff!==id;if(!card.hidden)count++})
         $('#pg-view-empty').textContent=id?(count?'':'No goals or KPIs found for this staff member.'):'Select a staff member to display their goals and KPIs.'
       }
       if(data.admin){
