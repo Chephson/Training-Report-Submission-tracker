@@ -953,6 +953,7 @@ async function renderHCOTSection(section) {
           const data=await api('/hcot/competency-assessments?staff_id='+id)
           const approvedMatches=data.performance_matches||[]
           const targetMap=new Map((data.competency_targets||[]).map(t=>[String(t.cycle)+'|'+String(t.competency_id),Number(t.target_score)]))
+          const inheritedTargetMap=new Map((data.inherited_targets||[]).filter(t=>t.target_score!==undefined).map(t=>[Number(t.competency_id),Number(t.target_score)]))
           const cycles=[...new Set(approvedMatches.map(m=>m.cycle))]
           const chosenCycle=$('#hca-cycle').value.trim()
           if(cycles.length===1&&!chosenCycle)$('#hca-cycle').value=cycles[0]
@@ -1033,6 +1034,69 @@ async function renderHCOTSection(section) {
         mappings.map(m=>'<tr><td>'+esc(m.full_name)+'</td><td>'+esc(m.competency_name)+'</td><td>'+(isAdmin?'<button class="btn btn-sm hcot-map-remove" data-staff="'+m.staff_id+'" data-comp="'+m.competency_id+'">Remove</button>':'—')+'</td></tr>').join('')+
         (mappings.length?'':'<tr><td colspan="3">No staff competencies mapped.</td></tr>')+'</tbody></table></div></div>'
 
+      if(isAdmin){
+        const policy=await api('/hcot/mapping-targets')
+        const levels=['Basic','Intermediate','Advanced','Expert']
+        const levelOptions=levels.map(x=>'<option value="'+x+'">'+x+' ('+({Basic:64,Intermediate:74,Advanced:84,Expert:100}[x])+')</option>').join('')
+        const mappingChoices=(groupData.cadres||[]).map(m=>({
+          ...m,group:groups.find(g=>Number(g.id)===Number(m.group_id)),
+          cadre:cadres.find(k=>Number(k.id)===Number(m.cadre_id))
+        })).filter(m=>m.group&&m.cadre)
+        const keyOf=m=>[m.cadre_id,m.group_id,m.division||'',m.department||'',m.unit||''].join('|')
+        const mappingOptions=mappingChoices.map((m,i)=>'<option value="'+i+'">'+esc(m.cadre.name)+' — '+esc(m.group.name)+' — '+esc(orgLabel(m))+'</option>').join('')
+        el.insertAdjacentHTML('afterbegin','<div class="card mt-16"><div class="card-head"><h3>Administrator-controlled competency targets</h3></div><div class="card-body"><p class="tiny muted">Select a mapped cadre/group and scope, set the group target, then assign individual competency targets. Individual competencies default to the group target; targets are inherited by staff and read-only to line managers.</p><label class="field"><span>Existing cadre / competency group / scope mapping</span><select id="hct-mapping"><option value="">Select existing mapping</option>'+mappingOptions+'</select></label><label class="field"><span>Group target level</span><select id="hct-group-level">'+levelOptions+'</select></label><div id="hct-members"></div><button class="btn btn-primary" id="hct-save">Save group and competency targets</button><hr><h4>Bulk upload competency targets</h4><p class="tiny muted">CSV UTF-8 columns: cadre,competency_group,competency,division,department,unit,target_level. Leave competency blank for group target. Existing cadre/group/scope mappings are required. All rows are validated before changes are applied.</p><button class="btn" id="hct-template">Download target CSV template</button><label class="field"><span>Upload CSV</span><input type="file" accept=".csv,text/csv" id="hct-file"></label><button class="btn" id="hct-validate">Validate and preview</button> <button class="btn btn-primary" id="hct-import" disabled>Confirm bulk upload</button><div id="hct-result" class="tiny muted"></div><p class="tiny muted">Configured target records: '+(policy.targets||[]).length+'</p></div></div>')
+        const mappingSelect=$('#hct-mapping'),memberBox=$('#hct-members'),groupLevel=$('#hct-group-level')
+        const existingFor=(m,cid)=>(policy.targets||[]).find(t=>Number(t.cadre_id)===Number(m.cadre_id)&&Number(t.group_id)===Number(m.group_id)&&Number(t.competency_id)===cid&&
+          String(t.division||'').toLowerCase()===String(m.division||'').toLowerCase()&&String(t.department||'').toLowerCase()===String(m.department||'').toLowerCase()&&String(t.unit||'').toLowerCase()===String(m.unit||'').toLowerCase())
+        const drawMembers=()=>{
+          const m=mappingChoices[Number(mappingSelect.value)]
+          if(!m||mappingSelect.value===''){memberBox.innerHTML='';return}
+          const prior=existingFor(m,0)
+          groupLevel.value=prior?.target_level||'Advanced'
+          const ids=(groupData.competencies||[]).filter(x=>Number(x.group_id)===Number(m.group_id)).map(x=>Number(x.competency_id))
+          memberBox.innerHTML='<h4>Individual competency targets</h4>'+ids.map(id=>{
+            const comp=comps.find(x=>Number(x.id)===id),priorComp=existingFor(m,id)
+            return comp?'<label class="field"><span>'+esc(comp.name)+'</span><select class="hct-comp-level" data-id="'+id+'">'+levels.map(l=>'<option value="'+l+'" '+(l===(priorComp?.target_level||groupLevel.value)?'selected':'')+'>'+l+'</option>').join('')+'</select></label>':''
+          }).join('')
+        }
+        mappingSelect.onchange=drawMembers
+        groupLevel.onchange=()=>memberBox.querySelectorAll('.hct-comp-level').forEach(x=>{if(!existingFor(mappingChoices[Number(mappingSelect.value)],Number(x.dataset.id)))x.value=groupLevel.value})
+        $('#hct-save').onclick=async()=>{
+          const m=mappingChoices[Number(mappingSelect.value)]
+          if(!m||mappingSelect.value===''){toast('Select an existing cadre/group mapping.',true);return}
+          const base={cadre:m.cadre.name,competency_group:m.group.name,division:m.division||'',department:m.department||'',unit:m.unit||''}
+          const rows=[{...base,competency:'',target_level:groupLevel.value},...Array.from(memberBox.querySelectorAll('.hct-comp-level')).map(x=>({...base,competency:comps.find(c=>Number(c.id)===Number(x.dataset.id))?.name||'',target_level:x.value}))]
+          try{await api('/hcot/mapping-targets/bulk',{method:'POST',body:JSON.stringify({rows,commit:true})});toast('Competency targets saved');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}
+        }
+        $('#hct-template').onclick=()=>{
+          const content='cadre,competency_group,competency,division,department,unit,target_level\\r\\n'
+          const url=URL.createObjectURL(new Blob(['\\uFEFF'+content],{type:'text/csv;charset=utf-8'}))
+          const a=document.createElement('a');a.href=url;a.download='hcot-competency-targets-template.csv';a.click();URL.revokeObjectURL(url)
+        }
+        let validatedTargets=null
+        const upload=$('#hct-file'),confirmUpload=$('#hct-import'),resultBox=$('#hct-result')
+        upload.onchange=()=>{validatedTargets=null;confirmUpload.disabled=true;resultBox.textContent='Validate the selected file before uploading.'}
+        $('#hct-validate').onclick=async()=>{
+          try{
+            const file=upload.files?.[0];if(!file||!/\\.csv$/i.test(file.name))throw Error('Select a CSV UTF-8 file.')
+            if(file.size>1000000)throw Error('CSV exceeds 1 MB.')
+            const text=await file.text(),lines=[];let fields=[],field='',quoted=false
+            for(let i=0;i<text.length;i++){const ch=text[i];if(ch==='"'){if(quoted&&text[i+1]==='"'){field+='"';i++}else quoted=!quoted}else if(ch===','&&!quoted){fields.push(field);field=''}else if((ch==='\\r'||ch==='\\n')&&!quoted){if(ch==='\\r'&&text[i+1]==='\\n')i++;fields.push(field);if(fields.some(v=>v.trim()))lines.push(fields);fields=[];field=''}else field+=ch}
+            if(quoted)throw Error('Unclosed CSV quote')
+            fields.push(field);if(fields.some(v=>v.trim()))lines.push(fields)
+            const header=(lines.shift()||[]).map(x=>x.trim().replace(/^\\uFEFF/,'').toLowerCase())
+            const required=['cadre','competency_group','competency','division','department','unit','target_level']
+            if(required.some(k=>!header.includes(k)))throw Error('Missing required columns: '+required.filter(k=>!header.includes(k)).join(', '))
+            const rows=lines.map((line,i)=>{if(line.length!==header.length)throw Error('Incorrect column count on row '+(i+2));return Object.fromEntries(header.map((h,j)=>[h,line[j].trim()]))})
+            const check=await api('/hcot/mapping-targets/bulk',{method:'POST',body:JSON.stringify({rows,commit:false})})
+            validatedTargets=rows;confirmUpload.disabled=false;resultBox.textContent='Validated '+check.preview.length+' target rows. Review the file and click Confirm bulk upload.'
+          }catch(e){validatedTargets=null;confirmUpload.disabled=true;resultBox.textContent=e.message;toast(e.message,true)}
+        }
+        confirmUpload.onclick=async()=>{
+          if(!validatedTargets)return
+          try{const res=await api('/hcot/mapping-targets/bulk',{method:'POST',body:JSON.stringify({rows:validatedTargets,commit:true})});toast(res.updated+' competency targets saved');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}
+        }
+      }
       if(isAdmin){
         const search=$('#hcg-staff-search'),select=$('#hcg-staff-select'),result=$('#hcg-staff-groups')
         const rosterStaff=staff.filter(x=>Number(x.active)===1)
