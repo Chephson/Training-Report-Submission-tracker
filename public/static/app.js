@@ -913,7 +913,7 @@ async function renderProgrammes(el) {
     $('#pg-rename-save').onclick=async()=>{try{await api('/programmes/'+$('#pg-rename-id').value,{method:'PATCH',body:JSON.stringify({name:$('#pg-rename-name').value})});toast('Programme name updated');renderProgrammes(el)}catch(e){toast(e.message,true)}}
   }
   $('#pg-tab-import').click()
-  $('#pg-staff-search').oninput=e=>{const q=e.target.value.trim().toLowerCase();$$$$('.pg-staff').forEach(x=>{const row=x.closest('label');row.style.display=row.textContent.toLowerCase().includes(q)?'block':'none'})}
+  $('#pg-staff-search').oninput=e=>{const q=e.target.value.trim().toLowerCase();$$('.pg-staff').forEach(x=>{const row=x.closest('label');row.style.display=row.textContent.toLowerCase().includes(q)?'block':'none'})}
   $('#pg-add').onclick=async()=>{try{await api('/programmes',{method:'POST',body:JSON.stringify({name:$('#pg-name').value.trim()})});toast('Programme created');renderProgrammes(el)}catch(e){toast(e.message,true)}}
   $('#pg-assign').onclick=async()=>{const programme_id=Number($('#pg-choice').value),staff_ids=Array.from(document.querySelectorAll('.pg-staff')).filter(x=>x.checked).map(x=>Number(x.value));try{const r=await api('/programme-assignments',{method:'POST',body:JSON.stringify({programme_id,staff_ids,period_id:period})});toast(r.added+' staff assignments added');renderProgrammes(el)}catch(e){toast(e.message,true)}}
   document.querySelectorAll('.pg-delete').forEach(btn=>btn.onclick=async()=>{
@@ -1358,7 +1358,7 @@ async function renderHCOTSection(section) {
         }
       }
       if(data.admin){
-        $('.pg-staff').forEach(select=>select.setAttribute('aria-label','Select staff member for performance goal'))
+        $$('.pg-staff').forEach(select=>select.setAttribute('aria-label','Select staff member for performance goal'))
         $('#pg-add').onclick=async()=>{
           try{
             const row={staff_email:$('#pg-staff').value,goal_title:$('#pg-goal').value,kpi_title:$('#pg-kpi').value,kpi_target:$('#pg-target').value,assessment_cycle:$('#pg-cycle').value,target_date:$('#pg-date').value}
