@@ -184,6 +184,14 @@ api.use('/hcot/*', async (c, next) => {
   // Explicit allowlist, not a broad "all GET" exception. New endpoints fail closed.
   const viewerRead = isHcotViewerRead(method, path)
   if (viewerRead) return next()
+  // These routes independently verify the Access identity, active staff mapping,
+  // and the requested staff ID. They are not general HCOT viewer permissions.
+  const supervisorScoped = (method === 'GET' && (
+    path === '/hcot/line-manager/my-staff' ||
+    path === '/hcot/line-manager/assessment-requests' ||
+    path === '/hcot/competency-assessments'
+  )) || (method === 'POST' && path === '/hcot/competency-assessments')
+  if (supervisorScoped) return next()
   const configured = c.env.HCOT_SETTINGS_ADMIN_EMAILS
   const admins = (configured || '').split(',').map(email => email.trim().toLowerCase()).filter(Boolean)
   if (!admins.length) return c.json({ error: 'HCOT administrator authorization is not configured.' }, 503)
