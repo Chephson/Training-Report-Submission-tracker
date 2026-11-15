@@ -1,5 +1,10 @@
 name: HCOT Preview calibrated target schema repair
 on:
+  push:
+    branches:
+      - feature/hcot-competency-assessment
+    paths:
+      - .github/workflows/hcot-preview-calibration-schema.yml
   workflow_dispatch:
 permissions:
   contents: read
