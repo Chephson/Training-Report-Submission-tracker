@@ -1436,6 +1436,41 @@ async function hcotMappedTarget(db:D1Database,staffId:number,competencyId:number
       CASE WHEN t.competency_id=? THEN 1 ELSE 0 END DESC, t.group_id ASC LIMIT 1`).bind(competencyId,staffId,competencyId,competencyId).first<{target_score:number;target_level:string;group_id:number}>()
   return r||null
 }
+// Preview administrator coverage audit: never changes targets or historical assessments.
+api.get('/hcot/mapping-targets/coverage',async c=>{
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const staff=await c.env.DB.prepare('SELECT id,full_name,email FROM staff WHERE active=1 ORDER BY full_name').all<{id:number;full_name:string;email:string}>()
+  const competencies=await c.env.DB.prepare('SELECT id,name FROM hcot_competencies ORDER BY name').all<{id:number;name:string}>()
+  const rows:Array<{staff_id:number;staff_name:string;competency_id:number;competency_name:string;target_score:number|null;target_level:string|null}>=[]
+  for(const person of staff.results||[]){
+    const eligible=await c.env.DB.prepare(`SELECT DISTINCT competency_id FROM (
+      SELECT m.competency_id FROM staff s JOIN hcot_cadre_competencies m ON m.cadre_id=s.cadre_id
+        WHERE s.id=? AND (m.division IS NULL OR LOWER(TRIM(m.division))=LOWER(TRIM(COALESCE(s.team,''))))
+          AND (m.department IS NULL OR LOWER(TRIM(m.department))=LOWER(TRIM(COALESCE(s.role,''))))
+          AND (m.unit IS NULL OR LOWER(TRIM(m.unit))=LOWER(TRIM(COALESCE(s.unit,''))))
+      UNION ALL
+      SELECT gc.competency_id FROM staff s JOIN hcot_group_competencies gc ON s.id=?
+        WHERE EXISTS(SELECT 1 FROM hcot_cadre_groups cg WHERE cg.cadre_id=s.cadre_id AND cg.group_id=gc.group_id)
+          OR EXISTS(SELECT 1 FROM hcot_cadre_group_scopes gs WHERE gs.cadre_id=s.cadre_id AND gs.group_id=gc.group_id
+            AND (gs.division IS NULL OR LOWER(TRIM(gs.division))=LOWER(TRIM(COALESCE(s.team,''))))
+            AND (gs.department IS NULL OR LOWER(TRIM(gs.department))=LOWER(TRIM(COALESCE(s.role,''))))
+            AND (gs.unit IS NULL OR LOWER(TRIM(gs.unit))=LOWER(TRIM(COALESCE(s.unit,'')))))
+      UNION ALL
+      SELECT competency_id FROM hcot_staff_competencies WHERE staff_id=?
+    )`).bind(person.id,person.id,person.id).all<{competency_id:number}>()
+    for(const item of eligible.results||[]){
+      const target=await hcotMappedTarget(c.env.DB,person.id,item.competency_id)
+      const competency=competencies.results?.find(x=>x.id===item.competency_id)
+      rows.push({staff_id:person.id,staff_name:person.full_name,competency_id:item.competency_id,
+        competency_name:competency?.name||String(item.competency_id),
+        target_score:target?.target_score??null,target_level:target?.target_level??null})
+    }
+  }
+  const missing=rows.filter(x=>x.target_score===null)
+  return c.json({staff_count:(staff.results||[]).length,eligible_competencies:rows.length,
+    configured:rows.length-missing.length,missing_count:missing.length,missing,read_only:true})
+})
 api.get('/hcot/mapping-targets',async c=>{
   const session=await verifyAccessJwt(c.req.raw,c.env)
   if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
