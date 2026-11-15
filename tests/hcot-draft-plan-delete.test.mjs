@@ -24,3 +24,10 @@ test('admin UI offers delete draft with confirmation and refresh',()=>{
  assert.match(ui,/method:'DELETE'/)
  assert.match(ui,/Draft training plan deleted/)
 })
+
+test('draft action handlers iterate querySelectorAll results, not a single element',()=>{
+ assert.match(ui,/\$\$\('\.hcot-delete'\)\.forEach/)
+ assert.match(ui,/\$\$\('\.hcot-edit'\)\.forEach/)
+ assert.doesNotMatch(ui,/(?<!\$)\$\('\.hcot-delete'\)\.forEach/)
+ assert.doesNotMatch(ui,/(?<!\$)\$\('\.hcot-edit'\)\.forEach/)
+})
