@@ -1326,6 +1326,25 @@ api.get('/hcot/evaluations/competency-report', async c=>{
   ])
   return c.json({assessments:assessments.results||[],managers:managers.results||[],requests:requests.results||[]})
 })
+api.delete('/hcot/evaluations/competency-assessments/:id', async c=>{
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const id=Number(c.req.param('id'))
+  if(!Number.isSafeInteger(id)||id<1)return c.json({error:'Invalid assessment ID.'},400)
+  const b=await c.req.json<{reason?:string}>().catch(()=>({}))
+  const reason=String(b.reason||'').trim()
+  if(reason.length<5||reason.length>500)return c.json({error:'Provide a deletion reason (5–500 characters).'},400)
+  const row=await c.env.DB.prepare('SELECT id,staff_id,competency_id,cycle,score,target_score,assessor_email,assessed_at FROM hcot_competency_assessments WHERE id=?').bind(id).first<{id:number;staff_id:number;competency_id:number;cycle:string;score:number;target_score:number;assessor_email:string;assessed_at:string}>()
+  if(!row)return c.json({error:'Assessment not found or already deleted.'},404)
+  // D1 batch is atomic: the deletion and audit entry must both succeed.
+  const detail=JSON.stringify({assessment:row,reason})
+  const results=await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM hcot_competency_assessments WHERE id=?').bind(id),
+    c.env.DB.prepare('INSERT INTO activity(event,detail,actor,ts) VALUES(?,?,?,?)').bind('hcot.competency_assessment.deleted',detail,session.email,new Date().toISOString())
+  ])
+  if(!results[0]?.meta?.changes)return c.json({error:'Assessment was not deleted.'},409)
+  return c.json({ok:true,deleted_id:id})
+})
 api.get('/hcot/evaluations/manager-staff', async c=>{
   const session=await verifyAccessJwt(c.req.raw,c.env)
   if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
