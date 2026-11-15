@@ -1332,6 +1332,43 @@ api.post('/hcot/line-manager/assignments/import', async c=>{
   await log(c.env.DB,'hcot_line_manager_bulk_import',JSON.stringify({count:prepared.length}),session.email)
   return c.json({ok:true,count:prepared.length})
 })
+/* Administrator-only evaluation export; filters are applied in SQL, not just the UI.
+   Historical assessment snapshots are exported without modification. */
+api.get('/hcot/evaluations/export',async c=>{
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const staffId=String(c.req.query('staff_id')||'').trim()
+  const division=String(c.req.query('division')||'').trim()
+  const department=String(c.req.query('department')||'').trim()
+  const cadreId=String(c.req.query('cadre_id')||'').trim()
+  const groupId=String(c.req.query('group_id')||'').trim()
+  if([staffId,division,department,cadreId,groupId].some(v=>v.length>160))return c.json({error:'Filter too long.'},400)
+  for(const id of [staffId,cadreId,groupId])if(id&&(!/^\\d+$/.test(id)||Number(id)<1||!Number.isSafeInteger(Number(id))))return c.json({error:'Invalid numeric filter.'},400)
+  const sql=`SELECT a.id AS assessment_id,a.staff_id,s.full_name AS staff_name,s.email AS staff_email,
+      COALESCE(s.team,'') AS division,COALESCE(s.role,'') AS department,COALESCE(s.unit,'') AS unit,
+      COALESCE(k.name,'') AS cadre,p.name AS competency_name,a.competency_id,a.cycle,
+      a.score,a.target_score,(a.target_score-a.score) AS score_gap,a.assessor_email,a.assessed_at,a.notes
+    FROM hcot_competency_assessments a
+    JOIN staff s ON s.id=a.staff_id
+    JOIN hcot_competencies p ON p.id=a.competency_id
+    LEFT JOIN hcot_cadres k ON k.id=s.cadre_id
+    WHERE (?='' OR s.id=CAST(? AS INTEGER))
+      AND (?='' OR LOWER(TRIM(COALESCE(s.team,'')))=LOWER(?))
+      AND (?='' OR LOWER(TRIM(COALESCE(s.role,'')))=LOWER(?))
+      AND (?='' OR s.cadre_id=CAST(? AS INTEGER))
+      AND (?='' OR EXISTS(SELECT 1 FROM hcot_group_competencies gc
+        WHERE gc.competency_id=a.competency_id AND gc.group_id=CAST(? AS INTEGER)
+        AND (EXISTS(SELECT 1 FROM hcot_cadre_groups cg WHERE cg.cadre_id=s.cadre_id AND cg.group_id=gc.group_id)
+          OR EXISTS(SELECT 1 FROM hcot_cadre_group_scopes gs WHERE gs.cadre_id=s.cadre_id AND gs.group_id=gc.group_id
+            AND (gs.division IS NULL OR LOWER(TRIM(gs.division))=LOWER(TRIM(COALESCE(s.team,''))))
+            AND (gs.department IS NULL OR LOWER(TRIM(gs.department))=LOWER(TRIM(COALESCE(s.role,''))))
+            AND (gs.unit IS NULL OR LOWER(TRIM(gs.unit))=LOWER(TRIM(COALESCE(s.unit,''))))))))
+    ORDER BY s.full_name COLLATE NOCASE,a.assessed_at DESC,a.id DESC LIMIT 10000`
+  const params=[staffId,staffId,division,division,department,department,cadreId,cadreId,groupId,groupId]
+  const result=await c.env.DB.prepare(sql).bind(...params).all()
+  await log(c.env.DB,'hcot.evaluations.exported',JSON.stringify({filters:{staffId,division,department,cadreId,groupId},count:result.results?.length||0}),session.email)
+  return c.json({rows:result.results||[],max_rows:10000,filters:{staff_id:staffId,division,department,cadre_id:cadreId,group_id:groupId}})
+})
 /* HCOT Evaluations: cross-manager reporting and explicit in-app assessment requests. */
 api.get('/hcot/evaluations/competency-report', async c=>{
   const session=await verifyAccessJwt(c.req.raw,c.env)
