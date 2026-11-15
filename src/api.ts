@@ -1781,7 +1781,7 @@ api.get('/hcot/performance-goals', async c=>{
     JOIN staff s ON s.id=g.staff_id WHERE (?=1 OR g.staff_id=?) ORDER BY s.full_name,g.cycle,g.id`).bind(admin?1:0,staffId).all()
   const kpis=await c.env.DB.prepare(`SELECT k.*,g.staff_id FROM hcot_performance_kpis k JOIN hcot_performance_goals g ON g.id=k.goal_id
     WHERE (?=1 OR g.staff_id=?) ORDER BY k.id`).bind(admin?1:0,staffId).all()
-  const matches=await c.env.DB.prepare(`SELECT m.*,p.name AS competency_name FROM hcot_performance_kpi_competencies m
+  const matches=await c.env.DB.prepare(`SELECT m.*,g.staff_id,p.name AS competency_name FROM hcot_performance_kpi_competencies m
     JOIN hcot_performance_kpis k ON k.id=m.kpi_id JOIN hcot_performance_goals g ON g.id=k.goal_id
     JOIN hcot_competencies p ON p.id=m.competency_id WHERE (?=1 OR g.staff_id=?) ORDER BY m.match_score DESC,p.name`).bind(admin?1:0,staffId).all()
   const targets=admin?await c.env.DB.prepare('SELECT staff_id,competency_id,cycle,target_score FROM hcot_competency_targets ORDER BY staff_id,cycle,competency_id').all():{results:[]}
