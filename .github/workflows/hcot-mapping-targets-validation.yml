@@ -14,6 +14,7 @@ on:
       - tests/hcot-group-codes-import.test.mjs
       - tests/hcot-admin-controls-navigation.test.mjs
       - tests/hcot-draft-plan-delete.test.mjs
+      - tests/hcot-plan-approval-management.test.mjs
       - tests/hcot-supervisor-gateway-authorization.test.mjs
       - src/index.tsx
       - migrations/0004_hcot_group_codes_multi_membership.sql
@@ -37,4 +38,4 @@ jobs:
           node --check public/static/app.js
       - name: Run HCOT regression tests (no Cloudflare access)
         run: |
-          node --test tests/hcot-competence-levels.test.mjs tests/hcot-competency-assessment.test.mjs tests/hcot-cadre-inheritance.test.mjs tests/hcot-supervisor-gateway-authorization.test.mjs tests/hcot-mapping-target-policy.test.mjs tests/hcot-evaluations-export.test.mjs tests/hcot-group-codes-import.test.mjs tests/hcot-admin-controls-navigation.test.mjs tests/hcot-draft-plan-delete.test.mjs
+          node --test tests/hcot-competence-levels.test.mjs tests/hcot-competency-assessment.test.mjs tests/hcot-cadre-inheritance.test.mjs tests/hcot-supervisor-gateway-authorization.test.mjs tests/hcot-mapping-target-policy.test.mjs tests/hcot-evaluations-export.test.mjs tests/hcot-group-codes-import.test.mjs tests/hcot-admin-controls-navigation.test.mjs tests/hcot-draft-plan-delete.test.mjs tests/hcot-plan-approval-management.test.mjs
