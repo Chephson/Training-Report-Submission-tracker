@@ -990,11 +990,11 @@ async function renderHCOTSection(section) {
           const updateTargetLevel=()=>{targetLevel.textContent=$('#hca-target').value.trim()===''?'Enter target score':competenceLevel($('#hca-target').value)}
           $('#hca-target').oninput=updateTargetLevel
           updateTargetLevel()
-          $('.hca-score').forEach(input=>{
+          $$('.hca-score').forEach(input=>{
             const label=$('.hca-score-level[data-id="'+input.dataset.id+'"]')
             input.oninput=()=>{label.textContent=input.value.trim()===''?'Enter a score to see competence level':competenceLevel(input.value)}
           })
-          $('.hca-save').forEach(btn=>btn.onclick=async()=>{
+          $$('.hca-save').forEach(btn=>btn.onclick=async()=>{
             const competencyId=Number(btn.dataset.id),input=$('.hca-score[data-id="'+competencyId+'"]'),notes=$('.hca-notes[data-id="'+competencyId+'"]')
             const score=Number(input.value),target=Number($('#hca-target').value),cycle=$('#hca-cycle').value.trim()
             if(!input.value||!Number.isInteger(score)||score<0||score>100||!Number.isInteger(target)||target<0||target>100||!cycle){toast('Enter an assessment cycle and valid whole-number score and target (0–100).',true);return}
