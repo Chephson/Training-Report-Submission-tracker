@@ -1417,6 +1417,91 @@ api.get('/hcot/line-manager/assessment-requests', async c=>{
   return c.json({requests:requests.results||[]})
 })
 // Administrator-owned, per-staff, per-cycle competency targets; never sourced from a supervisor request.
+// Administrator-owned competency target policy. The group row uses competency_id=0.
+// Scope is tied to the existing cadre/group mapping; specificity wins for staff inheritance.
+const HCOT_TARGET_SCORES:Record<string,number>={Basic:64,Intermediate:74,Advanced:84,Expert:100}
+async function hcotMappedTarget(db:D1Database,staffId:number,competencyId:number){
+  const r=await db.prepare(`SELECT t.target_score,t.target_level,t.group_id,t.competency_id AS target_competency_id,
+      t.division,t.department,t.unit
+    FROM staff s JOIN hcot_mapping_competency_targets t ON t.cadre_id=s.cadre_id
+    JOIN hcot_group_competencies gc ON gc.group_id=t.group_id AND gc.competency_id=?
+    WHERE s.id=? AND s.active=1 AND (t.competency_id=0 OR t.competency_id=?)
+      AND (t.division='' OR LOWER(t.division)=LOWER(TRIM(COALESCE(s.team,''))))
+      AND (t.department='' OR LOWER(t.department)=LOWER(TRIM(COALESCE(s.role,''))))
+      AND (t.unit='' OR LOWER(t.unit)=LOWER(TRIM(COALESCE(s.unit,''))))
+      AND (EXISTS(SELECT 1 FROM hcot_cadre_groups cg WHERE cg.cadre_id=t.cadre_id AND cg.group_id=t.group_id AND t.division='' AND t.department='' AND t.unit='')
+        OR EXISTS(SELECT 1 FROM hcot_cadre_group_scopes gs WHERE gs.cadre_id=t.cadre_id AND gs.group_id=t.group_id
+          AND COALESCE(gs.division,'')=t.division AND COALESCE(gs.department,'')=t.department AND COALESCE(gs.unit,'')=t.unit))
+    ORDER BY (CASE WHEN t.unit<>'' THEN 4 ELSE 0 END + CASE WHEN t.department<>'' THEN 2 ELSE 0 END + CASE WHEN t.division<>'' THEN 1 ELSE 0 END) DESC,
+      CASE WHEN t.competency_id=? THEN 1 ELSE 0 END DESC, t.group_id ASC LIMIT 1`).bind(competencyId,staffId,competencyId,competencyId).first<{target_score:number;target_level:string;group_id:number}>()
+  return r||null
+}
+api.get('/hcot/mapping-targets',async c=>{
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const rows=await c.env.DB.prepare(`SELECT t.*,k.name AS cadre_name,g.name AS group_name,p.name AS competency_name
+    FROM hcot_mapping_competency_targets t JOIN hcot_cadres k ON k.id=t.cadre_id
+    JOIN hcot_competency_groups g ON g.id=t.group_id
+    LEFT JOIN hcot_competencies p ON p.id=t.competency_id
+    ORDER BY k.name,g.name,t.competency_id,t.division,t.department,t.unit`).all()
+  return c.json({targets:rows.results||[]})
+})
+// JSON bulk endpoint supports validation-only preview and transactional commit.
+// Each group requires its own target (competency_id=0); individual targets override it.
+api.post('/hcot/mapping-targets/bulk',async c=>{
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const body=await c.req.json<{rows?:Array<Record<string,unknown>>;commit?:boolean}>().catch(()=>({}))
+  if(!Array.isArray(body.rows)||body.rows.length<1||body.rows.length>500)return c.json({error:'Supply 1–500 target rows.'},400)
+  const norm=(v:unknown)=>String(v??'').trim()
+  const [cadres,groups,comps,links,global,scoped]=await Promise.all([
+    c.env.DB.prepare('SELECT id,name FROM hcot_cadres WHERE active=1').all<{id:number;name:string}>(),
+    c.env.DB.prepare('SELECT id,name FROM hcot_competency_groups').all<{id:number;name:string}>(),
+    c.env.DB.prepare('SELECT id,name FROM hcot_competencies').all<{id:number;name:string}>(),
+    c.env.DB.prepare('SELECT group_id,competency_id FROM hcot_group_competencies').all<{group_id:number;competency_id:number}>(),
+    c.env.DB.prepare('SELECT cadre_id,group_id FROM hcot_cadre_groups').all<{cadre_id:number;group_id:number}>(),
+    c.env.DB.prepare('SELECT cadre_id,group_id,division,department,unit FROM hcot_cadre_group_scopes').all<{cadre_id:number;group_id:number;division:string|null;department:string|null;unit:string|null}>()
+  ])
+  const find=(items:Array<{id:number;name:string}>,v:string)=>items.find(x=>x.name.toLowerCase()===v.toLowerCase())
+  const errors:string[]=[],seen=new Set<string>()
+  const planned:Array<{cadreId:number;groupId:number;compId:number;division:string;department:string;unit:string;level:string;score:number}>=[]
+  for(let i=0;i<body.rows.length;i++){
+    const row=body.rows[i]||{}
+    const cadre=find(cadres.results||[],norm(row.cadre)),group=find(groups.results||[],norm(row.competency_group))
+    const compName=norm(row.competency),comp=compName?find(comps.results||[],compName):null
+    const division=norm(row.division),department=norm(row.department),unit=norm(row.unit)
+    const level=norm(row.target_level),score=HCOT_TARGET_SCORES[level]
+    const issue:string[]=[]
+    if(!cadre)issue.push('Unknown or inactive cadre')
+    if(!group)issue.push('Unknown competency group')
+    if(compName&&!comp)issue.push('Unknown competency')
+    if(score===undefined)issue.push('Target level must be Basic, Intermediate, Advanced or Expert')
+    if((department&&!division)||(unit&&!department))issue.push('Invalid organisational scope')
+    if(cadre&&group){
+      const globalMatch=!division&&!department&&!unit&&(global.results||[]).some(x=>x.cadre_id===cadre.id&&x.group_id===group.id)
+      const scopedMatch=(scoped.results||[]).some(x=>x.cadre_id===cadre.id&&x.group_id===group.id&&
+        norm(x.division).toLowerCase()===division.toLowerCase()&&norm(x.department).toLowerCase()===department.toLowerCase()&&norm(x.unit).toLowerCase()===unit.toLowerCase())
+      if(!globalMatch&&!scopedMatch)issue.push('Cadre/group/scope mapping must already exist')
+      if(comp&&!(links.results||[]).some(x=>x.group_id===group.id&&x.competency_id===comp.id))issue.push('Competency does not belong to group')
+    }
+    const key=[cadre?.id,group?.id,comp?.id||0,division.toLowerCase(),department.toLowerCase(),unit.toLowerCase()].join('|')
+    if(seen.has(key))issue.push('Duplicate target mapping in upload')
+    seen.add(key)
+    if(issue.length)errors.push('Row '+(i+2)+': '+issue.join('; '))
+    else planned.push({cadreId:cadre!.id,groupId:group!.id,compId:comp?.id||0,division,department,unit,level,score})
+  }
+  if(errors.length)return c.json({error:'Target import rejected; no rows applied.',errors,error_count:errors.length},422)
+  if(body.commit!==true)return c.json({ok:true,valid:true,preview:planned.map(p=>({cadre_id:p.cadreId,group_id:p.groupId,competency_id:p.compId,target_level:p.level,target_score:p.score,division:p.division,department:p.department,unit:p.unit}))})
+  await c.env.DB.batch(planned.map(p=>c.env.DB.prepare(`INSERT INTO hcot_mapping_competency_targets
+    (cadre_id,group_id,competency_id,division,department,unit,target_level,target_score,set_by)
+    VALUES(?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(cadre_id,group_id,competency_id,division,department,unit)
+    DO UPDATE SET target_level=excluded.target_level,target_score=excluded.target_score,set_by=excluded.set_by,updated_at=CURRENT_TIMESTAMP`)
+    .bind(p.cadreId,p.groupId,p.compId,p.division,p.department,p.unit,p.level,p.score,session.email)))
+  await log(c.env.DB,'hcot.mapping_targets.updated',JSON.stringify({count:planned.length}),session.email)
+  return c.json({ok:true,updated:planned.length})
+})
+
 api.put('/hcot/performance-goals/competency-target', async c=>{
   const session=await verifyAccessJwt(c.req.raw,c.env)
   if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
