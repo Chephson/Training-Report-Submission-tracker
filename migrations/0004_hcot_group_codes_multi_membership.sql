@@ -1,5 +1,11 @@
 -- Preview-only schema upgrade. Preserve existing group IDs and membership records.
-PRAGMA defer_foreign_keys=ON;
+-- Preserve all existing child rows before replacing the group table.
+CREATE TABLE hcot_upgrade_cadre_groups AS SELECT * FROM hcot_cadre_groups;
+CREATE TABLE hcot_upgrade_group_scopes AS SELECT * FROM hcot_cadre_group_scopes;
+CREATE TABLE hcot_upgrade_group_competencies AS SELECT * FROM hcot_group_competencies;
+DELETE FROM hcot_cadre_groups;
+DELETE FROM hcot_cadre_group_scopes;
+DELETE FROM hcot_group_competencies;
 CREATE TABLE IF NOT EXISTS hcot_competency_groups_new (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  name TEXT NOT NULL,
@@ -20,6 +26,12 @@ CREATE TABLE IF NOT EXISTS hcot_group_competencies_new (
  FOREIGN KEY(competency_id) REFERENCES hcot_competencies(id) ON DELETE CASCADE
 );
 INSERT INTO hcot_group_competencies_new(group_id,competency_id)
- SELECT group_id,competency_id FROM hcot_group_competencies;
+ SELECT group_id,competency_id FROM hcot_upgrade_group_competencies;
 DROP TABLE hcot_group_competencies;
 ALTER TABLE hcot_group_competencies_new RENAME TO hcot_group_competencies;
+
+INSERT INTO hcot_cadre_groups SELECT * FROM hcot_upgrade_cadre_groups;
+INSERT INTO hcot_cadre_group_scopes SELECT * FROM hcot_upgrade_group_scopes;
+DROP TABLE hcot_upgrade_cadre_groups;
+DROP TABLE hcot_upgrade_group_scopes;
+DROP TABLE hcot_upgrade_group_competencies;
