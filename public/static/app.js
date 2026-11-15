@@ -177,7 +177,11 @@ async function boot() {
   const access=await api('/hcot/access-session')
   state.hcotRole=access.role==='admin'?'admin':'supervisor'
   $('.nav a').forEach(link=>{
-    if(link.dataset.view)link.hidden=state.hcotRole!=='admin'&&link.dataset.view!=='supervisors'
+    if(link.dataset.view){
+      const restricted=state.hcotRole!=='admin'&&link.dataset.view!=='supervisors'
+      link.hidden=restricted
+      link.style.display=restricted?'none':''
+    }
   })
   $('#period-picker').hidden=state.hcotRole!=='admin'
   if(state.hcotRole!=='admin'){
