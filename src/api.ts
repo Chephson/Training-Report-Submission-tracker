@@ -708,6 +708,8 @@ api.patch('/programmes/:id', async (c) => {
   if (existing) return c.json({error:'Another programme already uses this name.'},409)
   const original=await c.env.DB.prepare('SELECT name FROM programmes WHERE id=?').bind(id).first<{name:string}>()
   if(!original)return c.json({error:'Programme not found.'},404)
+  const approvedPlan=await c.env.DB.prepare("SELECT id FROM hcot_training_plans WHERE status='approved' AND LOWER(TRIM(title))=LOWER(TRIM(?)) LIMIT 1").bind(original.name).first()
+  if(approvedPlan)return c.json({error:'This programme is linked to an approved HCOT plan and cannot be renamed here.'},409)
   const result=await c.env.DB.prepare('UPDATE programmes SET name=? WHERE id=?').bind(name,id).run()
   // Keep previously matched reports linked after correcting a programme title.
   const updated=await c.env.DB.prepare('UPDATE submissions SET training_programme=? WHERE LOWER(TRIM(training_programme))=LOWER(TRIM(?))').bind(name,original.name).run()
@@ -936,6 +938,8 @@ api.patch('/hcot/plans/:id/approval',async c=>{
   }
   if(plan.status==='approved')return c.json({ok:true,approval_status:'Approved',already_approved:true})
   if(plan.status!=='draft')return c.json({error:'Only pending draft plans can be approved.'},409)
+  const duplicate=await c.env.DB.prepare("SELECT id FROM hcot_training_plans WHERE status='approved' AND id<>? AND LOWER(TRIM(title))=LOWER(TRIM(?)) LIMIT 1").bind(id,plan.title).first()
+  if(duplicate)return c.json({error:'Another approved training plan already uses this programme title. Use a distinct title before approval.'},409)
   const period=await defaultPeriod(c.env.DB)
   if(!period)return c.json({error:'Configure an active reporting period before approving a plan.'},409)
   const participants=await c.env.DB.prepare(`SELECT hp.staff_id,st.active FROM hcot_participants hp JOIN staff st ON st.id=hp.staff_id WHERE hp.plan_id=?`).bind(id).all<{staff_id:number;active:number}>()
