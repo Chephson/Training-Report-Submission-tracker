@@ -165,7 +165,7 @@ api.get('/session', async (c) => {
    A shared tracker access code is not administrator authorization. */
 api.use('/*', async (c,next)=>{
   const path=c.req.path.replace('/api','')
-  if(path==='/login'||path==='/session'||path.startsWith('/ingest/')||path==='/hcot'||path.startsWith('/hcot/'))return next()
+  if(path==='/login'||path==='/session'||path==='/reset'||path.startsWith('/ingest/')||path==='/hcot'||path.startsWith('/hcot/'))return next()
   if(!c.env.HCOT_ACCESS_TEAM_DOMAIN?.trim()||!c.env.HCOT_ACCESS_AUD?.trim())return c.json({error:'HCOT administrator access required.'},403)
   const identity=await verifyAccessJwt(c.req.raw,c.env)
   if(!identity)return c.json({error:'Verified HCOT administrator identity required.'},401)
