@@ -181,8 +181,7 @@ async function boot() {
   })
   $('#period-picker').hidden=state.hcotRole!=='admin'
   if(state.hcotRole!=='admin'){
-    const hash=(location.hash.replace(/^#\\/?/, '').split('?')[0])||'supervisors'
-    navigate(hash==='supervisors'?hash:'supervisors',true)
+    navigate('supervisors',true)
     return
   }
 
