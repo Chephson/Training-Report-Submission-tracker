@@ -219,6 +219,7 @@ const ROUTES = {
   programmes: { title: 'Programme assignments', sub: 'Manage assignments and outstanding reports', render: renderProgrammes },
   outstanding: { title: 'Outstanding reports', sub: 'Track incomplete training reports for each employee and programme', render: renderOutstandingReports },
   hcot: { title: 'HCOT Training Monitor', sub: 'Training planning workspace (integration preview)', render: renderHCOT },
+  supervisors: { title: 'Line Managers/Supervisors', sub: 'Your assigned staff, assessment requests and competency assessments', render: renderSupervisorGateway },
   history: { title: 'Staff training history', sub: 'A consolidated record of training programmes reported by staff', render: renderTrainingHistory },
   inbox: { title: 'Unmatched responses', sub: 'Submissions we could not attribute to anyone on the roster', render: renderInbox },
   roster: { title: 'Staff roster', sub: 'The people required to submit reports', render: renderRoster },
@@ -256,6 +257,15 @@ if(hcotNav&&!hcotNav.querySelector('[data-view="hcot"]')){
   if(after)after.insertAdjacentElement('afterend',link);else hcotNav.appendChild(link)
 }
 
+// Separate line-manager gateway; HCOT administrators retain their existing HCOT tabs.
+if(hcotNav&&!hcotNav.querySelector('[data-view="supervisors"]')){
+  const link=document.createElement('a')
+  link.href='#/supervisors';link.dataset.view='supervisors'
+  link.innerHTML=ico('roster',18)+'<span>Line Managers/Supervisors</span>'
+  const hcotLink=hcotNav.querySelector('[data-view="hcot"]')
+  if(hcotLink)hcotLink.insertAdjacentElement('afterend',link);else hcotNav.appendChild(link)
+}
+
 window.addEventListener('hashchange', () => {
   const v = (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'dashboard'
   if (v !== state.view) navigate(v, true)
@@ -277,7 +287,10 @@ async function renderDashboard(el) {
   const pending=total-submitted
   const rate=pct(submitted,total)
   $('#topbar-actions').innerHTML='<a class="btn btn-primary" href="#/tracker">View programme tracker</a><a class="btn" href="#/programmes">Manage assignments</a>'
+  const supervisorCard='<div class="card mt-16"><div class="card-head"><h3>Line Managers/Supervisors</h3></div><div class="card-body"><p>Access your mapped staff, competency assessments and assessment requests through the dedicated supervisor gateway.</p><a class="btn btn-primary" href="#/supervisors">Open Line Managers/Supervisors</a></div></div>'
+
   el.innerHTML=
+    supervisorCard+
     (overview.stats?.unmatched ? notice('warn',overview.stats.unmatched+' unmatched response(s)','Review Microsoft Forms submissions that could not be matched. <a href="#/inbox">Open unmatched responses</a>'):'')+
     '<div class="grid grid-4 mt-16">'+
     '<div class="card stat stat-accent"><div class="stat-label">Training programmes</div><div class="stat-value">'+programmes.length+'</div><div class="stat-foot">Registered programmes</div></div>'+
@@ -1371,13 +1384,35 @@ async function renderHCOTSection(section) {
   }catch(e){el.innerHTML='<div class="notice notice-bad">'+esc(e.message)+'</div>'}
 }
 
+/* Dedicated line-manager entry point. The assessment API independently verifies
+   the signed-in manager and their staff assignments on every request. */
+async function renderSupervisorGateway(el){
+  const session=await api('/hcot/access-session')
+  const isAdmin=session.role==='admin'
+  const roster=await api('/hcot/line-manager/my-staff').catch(e=>{
+    if(isAdmin)return {staff:[]}
+    throw e
+  })
+  const staff=roster.staff||[]
+  if(!isAdmin&&!staff.length){
+    el.innerHTML='<div class="notice notice-warn">You do not currently have any staff mapped to you as a line manager. Contact HCOT to arrange an assignment.</div>'
+    return
+  }
+  if(isAdmin&&!staff.length){
+    el.innerHTML='<div class="card"><div class="card-body"><h3>Line Managers/Supervisors</h3><p>This gateway is for line-manager assessment activities. Your HCOT administrator tools remain available under HCOT Training Monitor.</p><p>No staff are currently mapped to your account as a line manager.</p><a class="btn" href="#/hcot">Open HCOT Training Monitor</a></div></div>'
+    return
+  }
+  el.innerHTML='<div class="card"><div class="card-head"><h3>My Staff Assessments</h3></div><div class="card-body"><p>Assess competencies for staff assigned to you and review HCOT assessment requests. Only your mapped staff are accessible.</p><p><strong>'+staff.length+'</strong> assigned staff member(s)</p></div></div><div id="hcot-extra" class="mt-16"></div>'
+  await renderHCOTSection('assessments')
+}
+
 /* HCOT unified module: draft planning only until security and synchronization are validated. */
 async function renderHCOT(el) {
   const session=await api('/hcot/access-session')
   const isAdmin=session.role==='admin'
   if(!isAdmin){
     const managerAccess=await api('/hcot/line-manager/my-staff').then(x=>Array.isArray(x.staff)&&x.staff.length>0).catch(()=>false)
-    if(managerAccess){/* data-section="assessments" is manager-only and not an administrator navigation tab. */el.innerHTML='<div class="card"><div class="card-body"><h3>Line Manager Competency Assessment</h3><p>Only employees assigned to your account are available for assessment.</p><div id="hcot-extra" class="mt-16"></div></div></div>';renderHCOTSection('assessments');return}
+    if(managerAccess){el.innerHTML='<div class="card"><div class="card-body"><h3>Line Managers/Supervisors</h3><p>Line-manager assessments have moved to their dedicated gateway.</p><a class="btn btn-primary" href="#/supervisors">Open Line Managers/Supervisors</a></div></div>';return}
     const data=await api('/hcot/plans')
     const plans=data.plans||[]
     el.innerHTML='<div class="card"><div class="card-body"><p>Read-only HCOT access. Training plan changes require administrator permission.</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn hcot-tab" data-section="calendar">Calendar</button><button class="btn hcot-tab" data-section="competencies">Competencies</button></div></div></div><div id="hcot-extra" class="mt-16"></div>'+
