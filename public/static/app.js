@@ -176,7 +176,7 @@ async function boot() {
   // Verify the Cloudflare Access identity before requesting any administrative dashboard data.
   const access=await api('/hcot/access-session')
   state.hcotRole=access.role==='admin'?'admin':'supervisor'
-  $('.nav a').forEach(link=>{
+  $$('.nav a').forEach(link=>{
     if(link.dataset.view){
       const restricted=state.hcotRole!=='admin'&&link.dataset.view!=='supervisors'
       link.hidden=restricted
