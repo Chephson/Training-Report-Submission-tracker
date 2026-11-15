@@ -1057,7 +1057,7 @@ async function renderHCOTSection(section) {
         el.insertAdjacentHTML('afterbegin','<div class="card mt-16"><div class="card-head"><h3>Competency level target score calibration</h3></div><div class="card-body"><p class="tiny muted">Adjust the numeric target assigned to each competence level. The competence bands remain fixed. Saving recalibrates all current cadre/group target mappings; previously submitted assessments retain their recorded scores and targets.</p>'+levels.map(level=>'<label class="field"><span>'+level+' (allowed '+levelPolicy.bands[level][0]+'–'+levelPolicy.bands[level][1]+')</span><input class="hct-policy-score" type="number" step="1" min="'+levelPolicy.bands[level][0]+'" max="'+levelPolicy.bands[level][1]+'" data-level="'+level+'" value="'+levelPolicy.scores[level]+'"></label>').join('')+'<button class="btn btn-primary" id="hct-policy-save">Save and recalibrate target scores</button></div></div>')
         $('#hct-policy-save').onclick=async()=>{
           const scores={}
-          for(const field of $('.hct-policy-score')){
+          for(const field of $$('.hct-policy-score')){
             const level=field.dataset.level,score=Number(field.value),[lo,hi]=levelPolicy.bands[level]
             if(!field.value.trim()||!Number.isInteger(score)||score<lo||score>hi){toast(level+' must be a whole number from '+lo+' to '+hi+'.',true);return}
             scores[level]=score
