@@ -1565,6 +1565,10 @@ api.get('/hcot/competency-assessments', async c => {
         AND (gs.unit IS NULL OR LOWER(TRIM(gs.unit))=LOWER(TRIM(COALESCE(s.unit,'')))))
     ) ORDER BY g.name COLLATE NOCASE`).bind(staffId).all()
   const targets=await c.env.DB.prepare('SELECT competency_id,cycle,target_score FROM hcot_competency_targets WHERE staff_id=?').bind(staffId).all()
+  const inheritedTargets=await Promise.all(((eligible.results||[]) as Array<{id:number}>).map(async p=>({
+    competency_id:p.id,...(await hcotMappedTarget(c.env.DB,staffId,p.id)||{})
+  })))
+
   const history=await c.env.DB.prepare(`SELECT a.*,p.name AS competency_name,p.category FROM hcot_competency_assessments a
     JOIN hcot_competencies p ON p.id=a.competency_id WHERE a.staff_id=?
     ORDER BY a.assessed_at DESC,a.id DESC LIMIT 500`).bind(staffId).all()
@@ -1604,7 +1608,7 @@ api.get('/hcot/competency-assessments', async c => {
         complete:values.length===relevant.length})
     }
   }
-  return c.json({staff,competencies:eligible.results||[],groups:linkedGroups.results||[],assessments:history.results||[],group_scores:groupScores,competency_targets:targets.results||[],performance_matches:pgMatches.results||[],performance_goals_assigned:(pgCount?.n||0)>0})
+  return c.json({staff,competencies:eligible.results||[],groups:linkedGroups.results||[],assessments:history.results||[],group_scores:groupScores,competency_targets:targets.results||[],inherited_targets:inheritedTargets,performance_matches:pgMatches.results||[],performance_goals_assigned:(pgCount?.n||0)>0})
 })
 api.post('/hcot/competency-assessments', async c => {
   const manager=await requireAssessmentManager(c)
@@ -1641,8 +1645,10 @@ api.post('/hcot/competency-assessments', async c => {
     if(!approved)return c.json({error:'Competency is not approved for the staff performance goals in this assessment cycle.'},409)
   }
   const savedTarget=await c.env.DB.prepare('SELECT target_score FROM hcot_competency_targets WHERE staff_id=? AND competency_id=? AND cycle=?').bind(staffId,competencyId,cycle).first<{target_score:number}>()
-  if(!savedTarget)return c.json({error:'HCOT administrator must set a competency target score for this staff member and cycle before assessment.'},409)
-  const target=savedTarget.target_score
+  const inheritedTarget=await hcotMappedTarget(c.env.DB,staffId,competencyId)
+  if(!inheritedTarget&&!savedTarget)return c.json({error:'HCOT administrator must configure a cadre/group competency target before assessment.'},409)
+  // Mapping policy supersedes legacy manually entered staff targets. Submitted assessments snapshot the target.
+  const target=inheritedTarget?.target_score??savedTarget!.target_score
   const result=await c.env.DB.prepare(`INSERT INTO hcot_competency_assessments(staff_id,competency_id,cycle,score,target_score,assessor_email,notes)
     VALUES(?,?,?,?,?,?,?)`).bind(staffId,competencyId,cycle,score,target,manager.email,notes||null).run()
   return c.json({ok:true,id:result.meta.last_row_id},201)
@@ -1779,7 +1785,12 @@ api.get('/hcot/performance-goals', async c=>{
     JOIN hcot_performance_kpis k ON k.id=m.kpi_id JOIN hcot_performance_goals g ON g.id=k.goal_id
     JOIN hcot_competencies p ON p.id=m.competency_id WHERE (?=1 OR g.staff_id=?) ORDER BY m.match_score DESC,p.name`).bind(admin?1:0,staffId).all()
   const targets=admin?await c.env.DB.prepare('SELECT staff_id,competency_id,cycle,target_score FROM hcot_competency_targets ORDER BY staff_id,cycle,competency_id').all():{results:[]}
-  return c.json({goals:goals.results||[],kpis:kpis.results||[],matches:matches.results||[],competency_targets:targets.results||[],admin})
+  const inheritedTargets=await Promise.all(((matches.results||[]) as Array<{staff_id?:number;competency_id:number}>).map(async m=>{
+    const staff=Number(m.staff_id||0)
+    return staff?{staff_id:staff,competency_id:m.competency_id,...(await hcotMappedTarget(c.env.DB,staff,m.competency_id)||{})}:null
+  }))
+
+  return c.json({goals:goals.results||[],kpis:kpis.results||[],matches:matches.results||[],competency_targets:targets.results||[],inherited_targets:inheritedTargets.filter(Boolean),admin})
 })
 api.post('/hcot/performance-goals/import', async c=>{
   const actor=await pgAdmin(c)
