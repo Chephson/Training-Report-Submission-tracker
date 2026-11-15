@@ -23,3 +23,8 @@ test('CSV target importer uses saved level calibration rather than hard-coded de
  assert.match(ui,/hct-policy-save/)
  assert.match(ui,/hct-policy-score/)
 })
+
+test('calibration save handler iterates the full collection of level inputs',()=>{
+ assert.match(ui,/for\(const field of \$\$\('\.hct-policy-score'\)\)/)
+ assert.doesNotMatch(ui,/for\(const field of \$\('\.hct-policy-score'\)\)/)
+})
