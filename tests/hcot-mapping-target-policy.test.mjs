@@ -35,3 +35,21 @@ test('group scores average distinct most recent assessments, preserving snapshot
  assert.match(api,/Math\.round\(sum\/values\.length\*100\)\/100/);
  assert.match(api,/VALUES\(\?,\?,\?,\?,\?,\?,\?\)/);
 });
+
+test('effective competency roster includes cadre-linked groups and excludes inactive direct mappings',()=>{
+ const effective=api.slice(api.indexOf("api.get('/hcot/effective-competencies'"),api.indexOf("api.get('/hcot/competency-staff'"));
+ assert.match(effective,/group_inherited AS/);
+ assert.match(effective,/hcot_cadre_group_scopes/);
+ assert.match(effective,/SELECT \* FROM group_inherited/);
+ assert.match(effective,/WHERE s.active=1/);
+});
+test('admin-only target coverage audit reports every eligible competency missing a mapped target',()=>{
+ const coverage=api.slice(api.indexOf("api.get('/hcot/mapping-targets/coverage'"),api.indexOf("api.get('/hcot/mapping-targets',"));
+ assert.match(coverage,/isHcotCompetencyAdmin\(c,session.email\)/);
+ assert.match(coverage,/hcot_cadre_competencies/);
+ assert.match(coverage,/hcot_group_competencies/);
+ assert.match(coverage,/hcot_staff_competencies/);
+ assert.match(coverage,/hcotMappedTarget\(c.env.DB,person.id,item.competency_id\)/);
+ assert.match(coverage,/missing_count:missing.length/);
+ assert.doesNotMatch(coverage,/\.run\(\)|DB\.batch/);
+});
