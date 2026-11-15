@@ -944,16 +944,16 @@ api.get('/hcot/competency-groups', async c => {
   ])
   return c.json({groups:groups.results||[],competencies:links.results||[],cadres:cadreLinks.results||[]})
 })
-api.post('/hcot/competency-groups', async c => {
+api.post('/hcot/competency-groups',async c=>{
   const session=await verifyAccessJwt(c.req.raw,c.env)
   if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
-  const b=await c.req.json<{name?:string;description?:string}>().catch(()=>({}))
-  const name=String(b.name||'').trim(),description=String(b.description||'').trim()
-  if(!name||name.length>150||description.length>1000)return c.json({error:'Enter a valid group name (up to 150 characters).'},400)
-  const duplicate=await c.env.DB.prepare('SELECT id FROM hcot_competency_groups WHERE LOWER(TRIM(name))=LOWER(TRIM(?))').bind(name).first()
-  if(duplicate)return c.json({error:'A competency group with this name already exists. Select the existing group instead.'},409)
-  try {const x=await c.env.DB.prepare('INSERT INTO hcot_competency_groups(name,description) VALUES (?,?)').bind(name,description||null).run();return c.json({ok:true,id:x.meta.last_row_id},201)}
-  catch{return c.json({error:'Competency group already exists or could not be saved.'},409)}
+  const b=await c.req.json<{name?:string;group_code?:string;description?:string}>().catch(()=>({}))
+  const name=String(b.name||'').trim(),code=String(b.group_code||'').trim(),description=String(b.description||'').trim()
+  if(!name||name.length>150||!code||code.length>80||!/^[-A-Za-z0-9_.]+$/.test(code)||description.length>1000)return c.json({error:'Valid group name and unique group code required.'},400)
+  const existing=await c.env.DB.prepare('SELECT id FROM hcot_competency_groups WHERE LOWER(group_code)=LOWER(?)').bind(code).first()
+  if(existing)return c.json({error:'Group code already exists.'},409)
+  try{const x=await c.env.DB.prepare('INSERT INTO hcot_competency_groups(name,group_code,description) VALUES (?,?,?)').bind(name,code,description||null).run();return c.json({ok:true,id:x.meta.last_row_id},201)}
+  catch{return c.json({error:'Competency group could not be saved.'},409)}
 })
 api.post('/hcot/competency-groups/import',async c=>{
   const session=await verifyAccessJwt(c.req.raw,c.env)
