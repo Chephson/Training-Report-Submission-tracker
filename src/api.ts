@@ -1343,7 +1343,7 @@ api.get('/hcot/evaluations/export',async c=>{
   const cadreId=String(c.req.query('cadre_id')||'').trim()
   const groupId=String(c.req.query('group_id')||'').trim()
   if([staffId,division,department,cadreId,groupId].some(v=>v.length>160))return c.json({error:'Filter too long.'},400)
-  for(const id of [staffId,cadreId,groupId])if(id&&(!/^\\d+$/.test(id)||Number(id)<1||!Number.isSafeInteger(Number(id))))return c.json({error:'Invalid numeric filter.'},400)
+  for(const id of [staffId,cadreId,groupId])if(id&&(!/^\d+$/.test(id)||Number(id)<1||!Number.isSafeInteger(Number(id))))return c.json({error:'Invalid numeric filter.'},400)
   const sql=`SELECT a.id AS assessment_id,a.staff_id,s.full_name AS staff_name,s.email AS staff_email,
       COALESCE(s.team,'') AS division,COALESCE(s.role,'') AS department,COALESCE(s.unit,'') AS unit,
       COALESCE(k.name,'') AS cadre,p.name AS competency_name,a.competency_id,a.cycle,
