@@ -945,7 +945,7 @@ async function renderHCOTSection(section) {
       const requestData=await api('/hcot/line-manager/assessment-requests').catch(err=>{console.warn('Assessment request inbox unavailable; assigned-staff assessments remain accessible:',err);return {requests:[]}})
       const pendingRequests=(requestData.requests||[]).filter(x=>x.status==='pending')
       const requestNotice=pendingRequests.length?'<div class="card mb-12"><div class="card-body"><h4>Assessment requests from HCOT</h4>'+pendingRequests.map(x=>'<p>Cycle: <strong>'+esc(x.cycle)+'</strong> — Staff: '+esc(x.staff_names||'All assigned staff')+' — Requested '+esc(x.requested_at)+'</p>').join('')+'</div></div>':''
-      el.innerHTML=requestNotice+'<div class="card"><div class="card-head"><h3>Individual competency assessment</h3></div><div class="card-body"><p class="tiny muted">All distinct competencies mapped to the selected staff member (cadre-inherited and direct) are assessed separately on a 0–100 scale.</p><label class="field"><span>Staff member</span><select id="hca-staff"><option value="">Select staff</option>'+staff.map(x=>'<option value="'+x.id+'">'+esc(x.full_name)+' — '+esc(x.email)+'</option>').join('')+'</select></label><label class="field"><span>Assessment cycle</span><input id="hca-cycle" maxlength="80" placeholder="e.g. 2026 Annual"></label><label class="field"><span>Target score (0–100)</span><input id="hca-target" type="number" min="0" max="100" step="1" value="70"></label><div id="hca-detail"></div></div></div>'
+      el.innerHTML=requestNotice+'<div class="card"><div class="card-head"><h3>Individual competency assessment</h3></div><div class="card-body"><p class="tiny muted">All distinct competencies mapped to the selected staff member (cadre-inherited and direct) are assessed separately on a 0–100 scale.</p><label class="field"><span>Staff member</span><select id="hca-staff"><option value="">Select staff</option>'+staff.map(x=>'<option value="'+x.id+'">'+esc(x.full_name)+' — '+esc(x.email)+'</option>').join('')+'</select></label><label class="field"><span>Assessment cycle</span><input id="hca-cycle" maxlength="80" placeholder="e.g. 2026 Annual"></label><label class="field"><span>Target score (0–100)</span><input id="hca-target" type="number" min="0" max="100" step="1" value="70"><span id="hca-target-level" class="tiny muted">Intermediate</span></label><div id="hca-detail"></div></div></div>'
       $('#hca-staff').onchange=async()=>{
         const detail=$('#hca-detail'),id=Number($('#hca-staff').value)
         if(!id){detail.innerHTML='';return}
@@ -962,7 +962,7 @@ async function renderHCOTSection(section) {
           const groupScores=(data.group_scores||[]).filter(g=>g.cycle===$('#hca-cycle').value.trim())
           const groupScoreHtml='<div class="card mt-16"><div class="card-head"><h4>Competency group performance — '+esc($('#hca-cycle').value.trim()||'Select cycle')+'</h4></div><div class="card-body">'+
             (groupScores.length?'<div class="table-wrap"><table><thead><tr><th>Competency group</th><th>Group average</th><th>Assessed / mapped</th><th>Coverage</th></tr></thead><tbody>'+
-            groupScores.map(g=>'<tr><td>'+esc(g.group_name)+'</td><td>'+(g.average_score===null?'Not assessed':g.average_score.toFixed(2)+'%')+'</td><td>'+g.assessed_competencies+' / '+g.total_competencies+'</td><td>'+(g.complete?'Complete':'Partial')+'</td></tr>').join('')+'</tbody></table></div>':'<p class="muted">No scores recorded for this assessment cycle yet.</p>')+
+            groupScores.map(g=>'<tr><td>'+esc(g.group_name)+'</td><td>'+(g.average_score===null?'Not assessed':g.average_score.toFixed(2)+'% ('+competenceLevel(g.average_score)+')')+'</td><td>'+g.assessed_competencies+' / '+g.total_competencies+'</td><td>'+(g.complete?'Complete':'Partial')+'</td></tr>').join('')+'</tbody></table></div>':'<p class="muted">No scores recorded for this assessment cycle yet.</p>')+
             '<p class="tiny muted">Each group average uses the latest recorded score for each competency in this cycle. Unassessed competencies are excluded from the average and counted in coverage.</p></div></div>'
           const linkedGroups=data.groups||[]
           const linkedIds=new Set(linkedGroups.map(g=>String(g.id)))
@@ -973,10 +973,10 @@ async function renderHCOTSection(section) {
 
           const performanceNotice=data.performance_goals_assigned?'<div class="notice notice-info"><div><strong>Performance Goals competency alignment</strong><p>Use the exact approved Performance Goals assessment cycle. Available cycles: '+esc(cycles.join(', ')||'none approved')+'.</p>'+ (approvedMatches.length?approvedMatches.map(m=>'<p>'+esc(m.cycle)+' · '+esc(m.goal_title)+' → '+esc(m.kpi_title)+' → '+esc(m.competency_name)+'</p>').join(''):'<p>No approved KPI-to-competency matches yet. HCOT must review the suggested competencies before assessment.</p>')+'</div></div>':''
           detail.innerHTML=performanceNotice+'<h4>Step 1: Select a competency group</h4><label class="field"><span>Cadre-linked competency group</span><select id="hca-group"><option value="">Select competency group</option>'+visibleGroups.map(g=>'<option value="'+esc(g.id)+'">'+esc(g.name)+' ('+comps.filter(x=>(groupFor(x))===g.id).length+')</option>').join('')+'</select></label><div id="hca-group-items" style="display:none"><h4>Step 2: Assess individual competencies ('+comps.length+' total)</h4>'+
-            (comps.length?comps.map(x=>'<div class="card mt-16 hca-competency" data-group="'+(groupFor(x))+'"><div class="card-body"><strong>'+esc(x.name)+'</strong> <span class="tiny muted">('+esc(x.category)+')</span> <span class="tiny muted">'+(x.inherited&&x.direct?'Cadre + direct':x.inherited?'Cadre-inherited':'Direct assignment')+'</span><label class="field"><span>Score (0–100)</span><input type="number" min="0" max="100" step="1" class="hca-score" data-id="'+x.id+'"></label><label class="field"><span>Assessment notes</span><textarea class="hca-notes" data-id="'+x.id+'"></textarea><button class="btn btn-primary hca-save" data-id="'+x.id+'">Record assessment</button></div></div>').join(''):'<p>No competencies are currently mapped to this staff member. Add cadre-based or direct mappings in the Competencies tab first.</p>')+'</div>'+
+            (comps.length?comps.map(x=>'<div class="card mt-16 hca-competency" data-group="'+(groupFor(x))+'"><div class="card-body"><strong>'+esc(x.name)+'</strong> <span class="tiny muted">('+esc(x.category)+')</span> <span class="tiny muted">'+(x.inherited&&x.direct?'Cadre + direct':x.inherited?'Cadre-inherited':'Direct assignment')+'</span><label class="field"><span>Score (0–100)</span><input type="number" min="0" max="100" step="1" class="hca-score" data-id="'+x.id+'"><span class="hca-score-level tiny muted" data-id="'+x.id+'">Enter a score to see competence level</span></label><label class="field"><span>Assessment notes</span><textarea class="hca-notes" data-id="'+x.id+'"></textarea><button class="btn btn-primary hca-save" data-id="'+x.id+'">Record assessment</button></div></div>').join(''):'<p>No competencies are currently mapped to this staff member. Add cadre-based or direct mappings in the Competencies tab first.</p>')+'</div>'+
             groupScoreHtml+
-            '<h4 class="mt-16">Individual competency performance and Assessment history</h4><div class="table-wrap"><table><thead><tr><th>Cycle</th><th>Competency</th><th>Score</th><th>Target</th><th>Gap</th><th>Assessor</th><th>Date</th></tr></thead><tbody>'+
-            history.map(x=>'<tr><td>'+esc(x.cycle)+'</td><td>'+esc(x.competency_name)+'</td><td>'+x.score+'</td><td>'+x.target_score+'</td><td>'+Math.max(0,x.target_score-x.score)+'</td><td>'+esc(x.assessor_email)+'</td><td>'+esc(x.assessed_at)+'</td></tr>').join('')+
+            '<h4 class="mt-16">Individual competency performance and Assessment history</h4><div class="table-wrap"><table><thead><tr><th>Cycle</th><th>Competency</th><th>Score / Competence level</th><th>Target / Competence level</th><th>Gap</th><th>Assessor</th><th>Date</th></tr></thead><tbody>'+
+            history.map(x=>'<tr><td>'+esc(x.cycle)+'</td><td>'+esc(x.competency_name)+'</td><td>'+competenceScore(x.score)+'</td><td>'+competenceScore(x.target_score)+'</td><td>'+Math.max(0,x.target_score-x.score)+'</td><td>'+esc(x.assessor_email)+'</td><td>'+esc(x.assessed_at)+'</td></tr>').join('')+
             (history.length?'':'<tr><td colspan="7">No assessments recorded.</td></tr>')+'</tbody></table></div>'
           if(visibleGroups.length){$('#hca-group').value=visibleGroups[0].id}
           $('#hca-group').onchange=()=>{
@@ -986,11 +986,19 @@ async function renderHCOTSection(section) {
           }
           $('#hca-group').onchange()
           $('#hca-cycle').onchange=()=>$('#hca-staff').onchange()
-          $$('.hca-save').forEach(btn=>btn.onclick=async()=>{
+          const targetLevel=$('#hca-target-level')
+          const updateTargetLevel=()=>{targetLevel.textContent=$('#hca-target').value.trim()===''?'Enter target score':competenceLevel($('#hca-target').value)}
+          $('#hca-target').oninput=updateTargetLevel
+          updateTargetLevel()
+          $('.hca-score').forEach(input=>{
+            const label=$('.hca-score-level[data-id="'+input.dataset.id+'"]')
+            input.oninput=()=>{label.textContent=input.value.trim()===''?'Enter a score to see competence level':competenceLevel(input.value)}
+          })
+          $('.hca-save').forEach(btn=>btn.onclick=async()=>{
             const competencyId=Number(btn.dataset.id),input=$('.hca-score[data-id="'+competencyId+'"]'),notes=$('.hca-notes[data-id="'+competencyId+'"]')
             const score=Number(input.value),target=Number($('#hca-target').value),cycle=$('#hca-cycle').value.trim()
             if(!input.value||!Number.isInteger(score)||score<0||score>100||!Number.isInteger(target)||target<0||target>100||!cycle){toast('Enter an assessment cycle and valid whole-number score and target (0–100).',true);return}
-            try{await api('/hcot/competency-assessments',{method:'POST',body:JSON.stringify({staff_id:id,competency_id:competencyId,cycle,score,target_score:target,notes:notes.value})});toast('Assessment recorded');$('#hca-staff').onchange()}
+            try{await api('/hcot/competency-assessments',{method:'POST',body:JSON.stringify({staff_id:id,competency_id:competencyId,cycle,score,target_score:target,notes:notes.value})});toast('Assessment recorded: '+score+' — '+competenceLevel(score)+' (target '+target+' — '+competenceLevel(target)+')');$('#hca-staff').onchange()}
             catch(e){toast(e.message,true)}
           })
         }catch(e){detail.innerHTML='<div class="notice notice-bad">'+esc(e.message)+'</div>'}
@@ -1352,7 +1360,7 @@ async function renderHCOTSection(section) {
       const showAssessments=()=>{
         const q=$('#hce-search').value.trim().toLowerCase()
         const visible=assessments.filter(x=>[x.full_name,x.staff_email,x.assessor_email,x.competency_name,x.cycle].some(v=>String(v||'').toLowerCase().includes(q)))
-        $('#hce-results').innerHTML='<div class="table-wrap"><table><thead><tr><th>Staff</th><th>Competency</th><th>Cycle</th><th>Score</th><th>Target</th><th>Gap</th><th>Line manager</th><th>Assessed</th><th>Notes</th><th>Action</th></tr></thead><tbody>'+visible.map(x=>'<tr><td>'+esc(x.full_name)+' ('+esc(x.staff_email)+')</td><td>'+esc(x.competency_name)+'</td><td>'+esc(x.cycle)+'</td><td>'+x.score+'</td><td>'+x.target_score+'</td><td>'+x.score_gap+'</td><td>'+esc(x.assessor_email)+'</td><td>'+esc(x.assessed_at)+'</td><td>'+esc(x.notes||'')+'</td><td><button class="btn btn-sm hce-delete-assessment" data-id="'+x.id+'">Delete</button></td></tr>').join('')+(visible.length?'':'<tr><td colspan="10">No matching assessments.</td></tr>')+'</tbody></table></div>'
+        $('#hce-results').innerHTML='<div class="table-wrap"><table><thead><tr><th>Staff</th><th>Competency</th><th>Cycle</th><th>Score / Competence level</th><th>Target / Competence level</th><th>Gap</th><th>Line manager</th><th>Assessed</th><th>Notes</th><th>Action</th></tr></thead><tbody>'+visible.map(x=>'<tr><td>'+esc(x.full_name)+' ('+esc(x.staff_email)+')</td><td>'+esc(x.competency_name)+'</td><td>'+esc(x.cycle)+'</td><td>'+competenceScore(x.score)+'</td><td>'+competenceScore(x.target_score)+'</td><td>'+x.score_gap+'</td><td>'+esc(x.assessor_email)+'</td><td>'+esc(x.assessed_at)+'</td><td>'+esc(x.notes||'')+'</td><td><button class="btn btn-sm hce-delete-assessment" data-id="'+x.id+'">Delete</button></td></tr>').join('')+(visible.length?'':'<tr><td colspan="10">No matching assessments.</td></tr>')+'</tbody></table></div>'
       }
       $('#hce-results').onclick=async event=>{
         const btn=event.target.closest('.hce-delete-assessment')
@@ -1404,6 +1412,13 @@ async function renderHCOTSection(section) {
 
 /* Dedicated line-manager entry point. The assessment API independently verifies
    the signed-in manager and their staff assignments on every request. */
+function competenceLevel(value){
+  const score=Number(value)
+  if(!Number.isFinite(score)||score<0||score>100)return 'Not rated'
+  return score<50?'No Competence':score<65?'Basic':score<75?'Intermediate':score<85?'Advanced':'Expert'
+}
+function competenceScore(value){return esc(String(value))+' ('+competenceLevel(value)+')'}
+
 async function renderSupervisorGateway(el){
   const session=await api('/hcot/access-session')
   const isAdmin=session.role==='admin'
