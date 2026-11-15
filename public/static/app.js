@@ -1045,15 +1045,26 @@ async function renderHCOTSection(section) {
         (mappings.length?'':'<tr><td colspan="3">No staff competencies mapped.</td></tr>')+'</tbody></table></div></div>'
 
       if(isAdmin){
-        const policy=await api('/hcot/mapping-targets')
+        const [policy,levelPolicy]=await Promise.all([api('/hcot/mapping-targets'),api('/hcot/competency-level-target-policy')])
         const levels=['Basic','Intermediate','Advanced','Expert']
-        const levelOptions=levels.map(x=>'<option value="'+x+'">'+x+' ('+({Basic:64,Intermediate:74,Advanced:84,Expert:100}[x])+')</option>').join('')
+        const levelOptions=levels.map(x=>'<option value="'+x+'">'+x+' ('+levelPolicy.scores[x]+')</option>').join('')
         const mappingChoices=(groupData.cadres||[]).map(m=>({
           ...m,group:groups.find(g=>Number(g.id)===Number(m.group_id)),
           cadre:cadres.find(k=>Number(k.id)===Number(m.cadre_id))
         })).filter(m=>m.group&&m.cadre)
         const keyOf=m=>[m.cadre_id,m.group_id,m.division||'',m.department||'',m.unit||''].join('|')
         const mappingOptions=mappingChoices.map((m,i)=>'<option value="'+i+'">'+esc(m.cadre.name)+' — '+esc(m.group.name)+' — '+esc(orgLabel(m))+'</option>').join('')
+        el.insertAdjacentHTML('afterbegin','<div class="card mt-16"><div class="card-head"><h3>Competency level target score calibration</h3></div><div class="card-body"><p class="tiny muted">Adjust the numeric target assigned to each competence level. The competence bands remain fixed. Saving recalibrates all current cadre/group target mappings; previously submitted assessments retain their recorded scores and targets.</p>'+levels.map(level=>'<label class="field"><span>'+level+' (allowed '+levelPolicy.bands[level][0]+'–'+levelPolicy.bands[level][1]+')</span><input class="hct-policy-score" type="number" step="1" min="'+levelPolicy.bands[level][0]+'" max="'+levelPolicy.bands[level][1]+'" data-level="'+level+'" value="'+levelPolicy.scores[level]+'"></label>').join('')+'<button class="btn btn-primary" id="hct-policy-save">Save and recalibrate target scores</button></div></div>')
+        $('#hct-policy-save').onclick=async()=>{
+          const scores={}
+          for(const field of $('.hct-policy-score')){
+            const level=field.dataset.level,score=Number(field.value),[lo,hi]=levelPolicy.bands[level]
+            if(!field.value.trim()||!Number.isInteger(score)||score<lo||score>hi){toast(level+' must be a whole number from '+lo+' to '+hi+'.',true);return}
+            scores[level]=score
+          }
+          if(!confirm('Apply these target scores to all current competency mapping targets? Historical assessments will not change.'))return
+          try{await api('/hcot/competency-level-target-policy',{method:'PUT',body:JSON.stringify({scores})});toast('Competency target scores recalibrated');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}
+        }
         el.insertAdjacentHTML('afterbegin','<div class="card mt-16"><div class="card-head"><h3>Administrator-controlled competency targets</h3></div><div class="card-body"><p class="tiny muted">Select a mapped cadre/group and scope, set the group target, then assign individual competency targets. Individual competencies default to the group target; targets are inherited by staff and read-only to line managers.</p><label class="field"><span>Existing cadre / competency group / scope mapping</span><select id="hct-mapping"><option value="">Select existing mapping</option>'+mappingOptions+'</select></label><label class="field"><span>Group target level</span><select id="hct-group-level">'+levelOptions+'</select></label><div id="hct-members"></div><button class="btn btn-primary" id="hct-save">Save group and competency targets</button><hr><h4>Bulk upload competency targets</h4><p class="tiny muted">CSV UTF-8 columns: cadre,competency_group,competency,division,department,unit,target_level. Leave competency blank for group target. Existing cadre/group/scope mappings are required. All rows are validated before changes are applied.</p><button class="btn" id="hct-template">Download target CSV template</button><label class="field"><span>Upload CSV</span><input type="file" accept=".csv,text/csv" id="hct-file"></label><button class="btn" id="hct-validate">Validate and preview</button> <button class="btn btn-primary" id="hct-import" disabled>Confirm bulk upload</button><div id="hct-result" class="tiny muted"></div><p class="tiny muted">Configured target records: '+(policy.targets||[]).length+'</p></div></div>')
         const mappingSelect=$('#hct-mapping'),memberBox=$('#hct-members'),groupLevel=$('#hct-group-level')
         const existingFor=(m,cid)=>(policy.targets||[]).find(t=>Number(t.cadre_id)===Number(m.cadre_id)&&Number(t.group_id)===Number(m.group_id)&&Number(t.competency_id)===cid&&
@@ -1305,7 +1316,7 @@ async function renderHCOTSection(section) {
         }catch(e){toast(e.message,true)}})
       }
     }else if(section==='goals'){
-      const [data,roster,legacy]=await Promise.all([api('/hcot/performance-goals'),api('/staff'),api('/hcot/goals')])
+      const [data,roster,legacy,cadreDirectory]=await Promise.all([api('/hcot/performance-goals'),api('/staff'),api('/hcot/goals'),api('/hcot/cadres')])
       const staff=roster.staff||[]
       const goals=data.goals||[],kpis=data.kpis||[],matches=data.matches||[]
       const competencyTargets=new Map((data.competency_targets||[]).map(t=>[t.staff_id+'|'+t.cycle+'|'+t.competency_id,t.target_score]))
@@ -1339,7 +1350,7 @@ async function renderHCOTSection(section) {
           division:unique('team').map(x=>({value:x,label:x})),
           department:unique('role').map(x=>({value:x,label:x})),
           unit:unique('unit').map(x=>({value:x,label:x})),
-          cadre:[...new Map(staff.filter(x=>x.cadre_id).map(x=>[String(x.cadre_id),{value:String(x.cadre_id),label:String(x.cadre_name||x.cadre||'Cadre #'+x.cadre_id)}])).values()]
+          cadre:(cadreDirectory.cadres||[]).filter(c=>staff.some(x=>Number(x.cadre_id)===Number(c.id))).map(c=>({value:String(c.id),label:c.name}))
         }
         $('#pg-export-type').onchange=()=>{
           const options=exportLists[$('#pg-export-type').value]||[]
