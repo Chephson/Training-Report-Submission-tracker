@@ -1070,7 +1070,7 @@ async function renderHCOTSection(section) {
         }
         $('#hct-template').onclick=()=>{
           const content='cadre,competency_group,competency,division,department,unit,target_level\\r\\n'
-          const url=URL.createObjectURL(new Blob(['\\uFEFF'+content],{type:'text/csv;charset=utf-8'}))
+          const url=URL.createObjectURL(new Blob(['\uFEFF'+content],{type:'text/csv;charset=utf-8'}))
           const a=document.createElement('a');a.href=url;a.download='hcot-competency-targets-template.csv';a.click();URL.revokeObjectURL(url)
         }
         let validatedTargets=null
@@ -1452,10 +1452,10 @@ async function renderHCOTSection(section) {
           const columns=['assessment_id','staff_id','staff_name','staff_email','division','department','unit','cadre','competency_name','competency_id','cycle','score','score_level','target_score','target_level','score_gap','assessor_email','assessed_at','notes']
           const safeCell=value=>{
             let text=String(value??'')
-            if(/^[\\s]*[=+@\\-]/.test(text))text="'"+text
+            if(/^\s*[=+@-]/.test(text))text="'"+text
             return '"'+text.replace(/"/g,'""')+'"'
           }
-          const content=[columns.join(','),...rows.map(x=>columns.map(k=>safeCell(k==='score_level'?competenceLevel(x.score):k==='target_level'?competenceLevel(x.target_score):x[k])).join(','))].join('\\r\\n')
+          const content=[columns.join(','),...rows.map(x=>columns.map(k=>safeCell(k==='score_level'?competenceLevel(x.score):k==='target_level'?competenceLevel(x.target_score):x[k])).join(','))].join('\r\n')
           const blob=new Blob(['\\uFEFF'+content],{type:'text/csv;charset=utf-8'})
           const url=URL.createObjectURL(blob)
           const a=document.createElement('a')
