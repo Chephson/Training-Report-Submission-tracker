@@ -9,6 +9,7 @@ on:
       - public/static/app.js
       - migrations/0003_hcot_mapping_competency_targets.sql
       - tests/hcot-mapping-target-policy.test.mjs
+      - tests/hcot-cadre-inheritance.test.mjs
   workflow_dispatch:
 permissions:
   contents: read
