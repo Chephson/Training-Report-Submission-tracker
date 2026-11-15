@@ -89,3 +89,5 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT_NAME: ${{ vars.CLOUDFLARE_PAGES_PROJECT_NAME }}
         run: npx wrangler pages deploy dist --project-name "$PROJECT_NAME" --branch feature/hcot-competency-assessment
+
+# Manual validation trigger: retry isolated Preview after Cloudflare D1 token permission update.
