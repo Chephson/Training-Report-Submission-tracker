@@ -905,6 +905,27 @@ api.patch('/hcot/plans/:id', async c => {
   await log(c.env.DB,'hcot.plan.updated',`Training plan #${id}`,actor!.email)
   return c.json({ok:true})
 })
+api.delete('/hcot/plans/:id', async c => {
+  const id=Number(c.req.param('id'))
+  if(!Number.isSafeInteger(id)||id<=0)return c.json({error:'Invalid training plan ID.'},400)
+  const plan=await c.env.DB.prepare('SELECT id,title,status FROM hcot_training_plans WHERE id=?').bind(id).first<{id:number;title:string;status:string}>()
+  if(!plan)return c.json({error:'Training plan not found.'},404)
+  if(plan.status!=='draft')return c.json({error:'Only draft training plans can be deleted.'},409)
+  // Never erase completed reviews or costing records through a draft deletion.
+  const linked=await c.env.DB.prepare(`SELECT
+    (SELECT COUNT(*) FROM hcot_reviews WHERE plan_id=?) AS reviews,
+    (SELECT COUNT(*) FROM hcot_cost_estimates WHERE plan_id=?) AS costs`).bind(id,id).first<{reviews:number;costs:number}>()
+  if(Number(linked?.reviews||0)>0||Number(linked?.costs||0)>0)
+    return c.json({error:'This draft has review or cost records. Remove those records through their respective workflows before deleting the plan.'},409)
+  const result=await c.env.DB.prepare(`DELETE FROM hcot_training_plans
+    WHERE id=? AND status='draft'
+    AND NOT EXISTS (SELECT 1 FROM hcot_reviews WHERE plan_id=?)
+    AND NOT EXISTS (SELECT 1 FROM hcot_cost_estimates WHERE plan_id=?)`).bind(id,id,id).run()
+  if(!result.meta.changes)return c.json({error:'Draft plan could not be deleted because its status or linked records changed.'},409)
+  const actor=await verifyAccessJwt(c.req.raw,c.env)
+  await log(c.env.DB,'hcot.plan.deleted',`Deleted draft training plan #${id}: ${plan.title}`,actor?.email||'unknown')
+  return c.json({ok:true,id})
+})
 api.get('/hcot/plans/:id/participants', async c => {
   const rows=await c.env.DB.prepare(`SELECT st.id,st.full_name,st.email,st.team FROM hcot_participants hp JOIN staff st ON st.id=hp.staff_id WHERE hp.plan_id=? ORDER BY st.full_name COLLATE NOCASE`).bind(Number(c.req.param('id'))).all()
   return c.json({staff:rows.results||[]})
