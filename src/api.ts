@@ -1528,7 +1528,7 @@ api.post('/hcot/competency-assessments', async c => {
   const staffId=Number(b.staff_id),competencyId=Number(b.competency_id),score=Number(b.score)
   const cycle=String(b.cycle||'').trim(),notes=String(b.notes||'').trim()
   if(!Number.isSafeInteger(staffId)||staffId<=0||!Number.isSafeInteger(competencyId)||competencyId<=0)return c.json({error:'Select staff and competency.'},400)
-  if(!Number.isInteger(score)||score<0||score>100return c.json({error:'Assessment score must be a whole number from 0 to 100.'},400)
+  if(!Number.isInteger(score)||score<0||score>100)return c.json({error:'Assessment score must be a whole number from 0 to 100.'},400)
   if(!cycle||cycle.length>80||notes.length>2000)return c.json({error:'Invalid assessment cycle or notes.'},400)
   if(!(await isAssignedToManager(c,staffId,manager.email!)))return c.json({error:'Staff member is not assigned to this line manager.'},403)
   const eligible=await c.env.DB.prepare(`SELECT 1 AS eligible FROM staff s
