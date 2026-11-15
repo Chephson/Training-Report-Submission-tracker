@@ -34,7 +34,7 @@ jobs:
       - name: Checkout approved HCOT feature commit (never main)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: 9d19b46e1a5ded4229c4fb6e261ad293311b8e8a
+          ref: 9494717c728ee660d9c2c365f57920f562d698a4
           persist-credentials: false
 
       - name: Verify approved source and Cloudflare production branch
@@ -44,7 +44,7 @@ jobs:
           API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "9d19b46e1a5ded4229c4fb6e261ad293311b8e8a"
+          test "$(git rev-parse HEAD)" = "9494717c728ee660d9c2c365f57920f562d698a4"
           curl --fail --silent --show-error \
             -H "Authorization: Bearer $API_TOKEN" \
             "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/pages/projects/$PROJECT_NAME" > /tmp/hcot-pages-project.json
@@ -72,6 +72,14 @@ jobs:
           npm ci
           npm run build
           node --test tests/hcot-settings-bootstrap.test.mjs
+
+      - name: Apply competency target schema to isolated Preview D1 only
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute report-tracker-hcot-preview --remote --file migrations/0002_hcot_competency_targets.sql
 
       - name: Deploy approved commit to HCOT Preview only
         env:
