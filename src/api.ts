@@ -1693,7 +1693,8 @@ api.get('/hcot/performance-goals', async c=>{
   const matches=await c.env.DB.prepare(`SELECT m.*,p.name AS competency_name FROM hcot_performance_kpi_competencies m
     JOIN hcot_performance_kpis k ON k.id=m.kpi_id JOIN hcot_performance_goals g ON g.id=k.goal_id
     JOIN hcot_competencies p ON p.id=m.competency_id WHERE (?=1 OR g.staff_id=?) ORDER BY m.match_score DESC,p.name`).bind(admin?1:0,staffId).all()
-  return c.json({goals:goals.results||[],kpis:kpis.results||[],matches:matches.results||[],admin})
+  const targets=admin?await c.env.DB.prepare('SELECT staff_id,competency_id,cycle,target_score FROM hcot_competency_targets ORDER BY staff_id,cycle,competency_id').all():{results:[]}
+  return c.json({goals:goals.results||[],kpis:kpis.results||[],matches:matches.results||[],competency_targets:targets.results||[],admin})
 })
 api.post('/hcot/performance-goals/import', async c=>{
   const actor=await pgAdmin(c)
