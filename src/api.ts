@@ -976,6 +976,33 @@ api.post('/hcot/competency-groups',async c=>{
   try{const x=await c.env.DB.prepare('INSERT INTO hcot_competency_groups(name,group_code,description) VALUES (?,?,?)').bind(name,code,description||null).run();return c.json({ok:true,id:x.meta.last_row_id},201)}
   catch{return c.json({error:'Competency group could not be saved.'},409)}
 })
+api.patch('/hcot/competency-groups/:id',async c=>{
+  const actor=await verifyAccessJwt(c.req.raw,c.env)
+  if(!actor||!(await isHcotCompetencyAdmin(c,actor.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const id=Number(c.req.param('id')),b=await c.req.json<{name?:string;description?:string}>().catch(()=>({}))
+  const name=String(b.name||'').trim(),description=String(b.description||'').trim()
+  if(!Number.isSafeInteger(id)||id<=0||!name||name.length>150||description.length>1000)return c.json({error:'Enter a valid competency group name and description.'},400)
+  const r=await c.env.DB.prepare('UPDATE hcot_competency_groups SET name=?,description=? WHERE id=?').bind(name,description||null,id).run()
+  if(!r.meta.changes)return c.json({error:'Competency group not found.'},404)
+  await log(c.env.DB,'hcot.group.updated','Competency group #'+id,actor.email)
+  return c.json({ok:true})
+})
+api.delete('/hcot/competency-groups/:id',async c=>{
+  const actor=await verifyAccessJwt(c.req.raw,c.env)
+  if(!actor||!(await isHcotCompetencyAdmin(c,actor.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const id=Number(c.req.param('id'))
+  if(!Number.isSafeInteger(id)||id<=0)return c.json({error:'Invalid competency group.'},400)
+  const group=await c.env.DB.prepare('SELECT name FROM hcot_competency_groups WHERE id=?').bind(id).first<{name:string}>()
+  if(!group)return c.json({error:'Competency group not found.'},404)
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM hcot_group_competencies WHERE group_id=?').bind(id),
+    c.env.DB.prepare('DELETE FROM hcot_cadre_groups WHERE group_id=?').bind(id),
+    c.env.DB.prepare('DELETE FROM hcot_cadre_group_scopes WHERE group_id=?').bind(id),
+    c.env.DB.prepare('DELETE FROM hcot_competency_groups WHERE id=?').bind(id)
+  ])
+  await log(c.env.DB,'hcot.group.deleted','Competency group #'+id+': '+group.name,actor.email)
+  return c.json({ok:true})
+})
 api.post('/hcot/competency-groups/import',async c=>{
   const session=await verifyAccessJwt(c.req.raw,c.env)
   if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
