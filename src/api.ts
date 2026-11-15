@@ -164,7 +164,7 @@ api.get('/session', async (c) => {
    separate from this role gate. HCOT line-manager endpoints keep their own scoped checks.
    A shared tracker access code is not administrator authorization. */
 api.use('/*', async (c,next)=>{
-  const path=c.req.path.replace(/^\\/api/,'')
+  const path=c.req.path.replace('/api','')
   if(path==='/login'||path==='/session'||path.startsWith('/ingest/')||path==='/hcot'||path.startsWith('/hcot/'))return next()
   if(!c.env.HCOT_ACCESS_TEAM_DOMAIN?.trim()||!c.env.HCOT_ACCESS_AUD?.trim())return c.json({error:'HCOT Access configuration required.'},503)
   const identity=await verifyAccessJwt(c.req.raw,c.env)
