@@ -1581,6 +1581,44 @@ api.get('/hcot/line-manager/assessment-requests', async c=>{
 // Administrator-owned competency target policy. The group row uses competency_id=0.
 // Scope is tied to the existing cadre/group mapping; specificity wins for staff inheritance.
 const HCOT_TARGET_SCORES:Record<string,number>={Basic:64,Intermediate:74,Advanced:84,Expert:100}
+const HCOT_SCORE_BANDS:Record<string,[number,number]>={Basic:[50,64],Intermediate:[65,74],Advanced:[75,84],Expert:[85,100]}
+const HCOT_POLICY_KEY='hcot_competency_level_target_scores'
+async function hcotLevelPolicy(db:D1Database):Promise<Record<string,number>>{
+  const row=await db.prepare('SELECT value FROM settings WHERE key=?').bind(HCOT_POLICY_KEY).first<{value:string}>()
+  if(!row)return {...HCOT_TARGET_SCORES}
+  try{
+    const values=JSON.parse(row.value) as Record<string,unknown>
+    if(Object.entries(HCOT_SCORE_BANDS).every(([level,[lo,hi]])=>Number.isInteger(values[level])&&Number(values[level])>=lo&&Number(values[level])<=hi))
+      return Object.fromEntries(Object.keys(HCOT_SCORE_BANDS).map(level=>[level,Number(values[level])]))
+  }catch{}
+  return {...HCOT_TARGET_SCORES}
+}
+api.get('/hcot/competency-level-target-policy',async c=>{
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  return c.json({scores:await hcotLevelPolicy(c.env.DB),bands:HCOT_SCORE_BANDS})
+})
+api.put('/hcot/competency-level-target-policy',async c=>{
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const body=await c.req.json<{scores?:Record<string,unknown>}>().catch(()=>({}))
+  const scores=body.scores
+  if(!scores||Object.entries(HCOT_SCORE_BANDS).some(([level,[lo,hi]])=>!Number.isInteger(scores[level])||Number(scores[level])<lo||Number(scores[level])>hi))
+    return c.json({error:'Enter an integer target within the fixed competence band for each level.'},400)
+  const next=Object.fromEntries(Object.keys(HCOT_SCORE_BANDS).map(level=>[level,Number(scores[level])]))
+  const previous=await hcotLevelPolicy(c.env.DB)
+  const statements=[
+    c.env.DB.prepare(`INSERT INTO settings(key,value,updated_at) VALUES(?,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP`).bind(HCOT_POLICY_KEY,JSON.stringify(next))
+  ]
+  for(const level of Object.keys(HCOT_SCORE_BANDS))statements.push(
+    c.env.DB.prepare('UPDATE hcot_mapping_competency_targets SET target_score=?,updated_at=CURRENT_TIMESTAMP,set_by=? WHERE target_level=?')
+      .bind(next[level],session.email,level))
+  await c.env.DB.batch(statements)
+  await log(c.env.DB,'hcot.competency_level_targets.recalibrated',JSON.stringify({previous,next,history_unchanged:true}),session.email)
+  return c.json({ok:true,scores:next,previous,existing_mapping_targets_recalibrated:true,historical_assessments_unchanged:true})
+})
+
 async function hcotMappedTarget(db:D1Database,staffId:number,competencyId:number){
   const r=await db.prepare(`SELECT t.target_score,t.target_level,t.group_id,t.competency_id AS target_competency_id,
       t.division,t.department,t.unit
@@ -1650,6 +1688,7 @@ api.post('/hcot/mapping-targets/bulk',async c=>{
   const body=await c.req.json<{rows?:Array<Record<string,unknown>>;commit?:boolean}>().catch(()=>({}))
   if(!Array.isArray(body.rows)||body.rows.length<1||body.rows.length>500)return c.json({error:'Supply 1–500 target rows.'},400)
   const norm=(v:unknown)=>String(v??'').trim()
+  const levelScores=await hcotLevelPolicy(c.env.DB)
   const [cadres,groups,comps,links,global,scoped]=await Promise.all([
     c.env.DB.prepare('SELECT id,name FROM hcot_cadres WHERE active=1').all<{id:number;name:string}>(),
     c.env.DB.prepare('SELECT id,name FROM hcot_competency_groups').all<{id:number;name:string}>(),
@@ -1666,7 +1705,7 @@ api.post('/hcot/mapping-targets/bulk',async c=>{
     const cadre=find(cadres.results||[],norm(row.cadre)),group=find(groups.results||[],norm(row.competency_group))
     const compName=norm(row.competency),comp=compName?find(comps.results||[],compName):null
     const division=norm(row.division),department=norm(row.department),unit=norm(row.unit)
-    const level=norm(row.target_level),score=HCOT_TARGET_SCORES[level]
+    const level=norm(row.target_level),score=levelScores[level]
     const issue:string[]=[]
     if(!cadre)issue.push('Unknown or inactive cadre')
     if(!group)issue.push('Unknown competency group')
