@@ -1315,7 +1315,7 @@ async function renderHCOTSection(section) {
       const template='staff_email,goal_title,kpi_title,kpi_target,target_date,assessment_cycle\n'
       const list=goals.map(g=>{
         const children=kpis.filter(k=>k.goal_id===g.id)
-        return '<div class="card mt-12"><div class="card-head"><div><h3>'+esc(g.title)+'</h3><p>'+esc(g.full_name)+' · '+esc(g.cycle)+' · '+esc(g.target_date||'No deadline')+'</p></div>'+(data.admin?'<button class="btn btn-sm pg-edit-goal" data-id="'+g.id+'">Edit goal</button>':'')+'</div><div class="card-body">'+
+        return '<div class="card mt-12 pg-goal-card" data-staff="'+g.staff_id+'" hidden><div class="card-head"><div><h3>'+esc(g.title)+'</h3><p>'+esc(g.full_name)+' · '+esc(g.cycle)+' · '+esc(g.target_date||'No deadline')+'</p></div>'+(data.admin?'<button class="btn btn-sm pg-edit-goal" data-id="'+g.id+'">Edit goal</button>':'')+'</div><div class="card-body">'+
           (children.length?children.map(k=>{
             const items=matches.filter(m=>m.kpi_id===k.id)
             return '<div class="mb-12"><strong>KPI: '+esc(k.title)+'</strong> <span class="tiny muted">Target: '+esc(k.target_value||'—')+'</span>'+(data.admin?'<button class="btn btn-sm pg-edit-kpi" data-id="'+k.id+'">Edit KPI</button>':'')+'<div class="tiny muted">Matched competencies: '+(items.length?items.map(m=>'<span style="display:inline-block;margin:4px;padding:5px;border:1px solid #d3d8e0;border-radius:6px">'+esc(m.competency_name)+' ('+esc(m.status)+')'+(m.status==='approved'?' — Target: '+(goalTarget(g,m)!==undefined?competenceScore(goalTarget(g,m)):'Not configured in Competencies'):'')+''+(data.admin?'<button class="btn btn-sm pg-review" data-kpi="'+k.id+'" data-comp="'+m.competency_id+'" data-status="'+(m.status==='approved'?'rejected':'approved')+'">'+(m.status==='approved'?'Reject':'Approve')+'</button>':'')+'</span>').join(''):'No confident match; HCOT review required')+(data.admin?'<button class="btn btn-sm pg-add-match" data-kpi="'+k.id+'" data-staff="'+g.staff_id+'">Add mapped competency</button>':'')+'</div></div>'
@@ -1323,10 +1323,42 @@ async function renderHCOTSection(section) {
       }).join('')
       el.innerHTML='<div class="card"><div class="card-head"><h3>Performance Goals</h3></div><div class="card-body"><p class="tiny muted">Each goal contains its own KPIs. Suggested competencies come exclusively from the staff member’s existing mappings and require HCOT approval before being used for assessment.</p>'+
         (data.admin?'<label class="field"><span>Staff member</span><select id="pg-staff" class="pg-staff">'+staff.map(x=>'<option value="'+esc(x.email)+'">'+esc(x.full_name)+' — '+esc(x.email)+'</option>').join('')+'</select></label><label class="field"><span>Performance goal</span><input id="pg-goal" maxlength="250" placeholder="Goal title"></label><label class="field"><span>KPI under this goal</span><input id="pg-kpi" maxlength="500" placeholder="Specific measurable KPI"></label><label class="field"><span>KPI target</span><input id="pg-target" maxlength="250"></label><label class="field"><span>Assessment cycle</span><input id="pg-cycle" maxlength="80" placeholder="2026 Annual"></label><label class="field"><span>Target date</span><input id="pg-date" type="date"></label><button class="btn btn-primary" id="pg-add">Add goal / KPI</button><div class="mt-16"><h4>Bulk upload goals and KPIs</h4><p class="tiny muted">CSV UTF-8 with one KPI per row. Reuse the same goal title for multiple KPIs. Invalid imports are rejected before any records are applied.</p><button class="btn" id="pg-template">Download CSV template</button><input type="file" id="pg-file" accept=".csv,text/csv"><button class="btn btn-primary" id="pg-import">Import CSV</button></div>':'')+'</div></div>'+
-        '<div class="mt-16"><h3>Goals and KPIs by staff</h3>'+(list||'<p class="muted">No performance goals assigned yet.</p>')+'</div>'+
+        '<div class="card mt-16"><div class="card-head"><h3>Goals and KPIs by staff</h3></div><div class="card-body"><label class="field"><span>Select staff to view goals and KPIs</span><select id="pg-view-staff"><option value="">Select staff member</option>'+staff.map(x=>'<option value="'+x.id+'">'+esc(x.full_name)+' — '+esc(x.email)+'</option>').join('')+'</select></label><p id="pg-view-empty" class="tiny muted">Select a staff member to display their goals and KPIs.</p><div id="pg-goal-results">'+list+'</div></div></div>'+
+        (data.admin?'<div class="card mt-16"><div class="card-head"><h3>Export goals and KPIs</h3></div><div class="card-body"><p class="tiny muted">Choose one filter to export only its matching goals and KPIs. Other filters are not required.</p><label class="field"><span>Export by</span><select id="pg-export-type"><option value="">Select filter</option><option value="staff">Staff</option><option value="division">Division</option><option value="department">Department</option><option value="unit">Unit</option><option value="cadre">Cadre</option></select></label><label class="field"><span>Select value</span><select id="pg-export-value"><option value="">Choose a filter first</option></select></label><button class="btn btn-primary" id="pg-export-run">Export CSV</button></div></div>':'')+
         ((legacy.goals||[]).length?'<div class="card mt-16"><div class="card-head"><h3>Previous development goals (preserved, read-only)</h3></div><div class="card-body">'+legacy.goals.map(x=>'<p>'+esc(x.title)+' · '+esc(x.measure||'No KPI')+' · '+esc(x.owner_label||'Unassigned')+'</p>').join('')+'</div></div>':'')
+      $('#pg-view-staff').onchange=()=>{
+        const id=$('#pg-view-staff').value
+        let count=0
+        $('.pg-goal-card').forEach(card=>{card.hidden=!id||card.dataset.staff!==id;if(!card.hidden)count++})
+        $('#pg-view-empty').textContent=id?(count?'':'No goals or KPIs found for this staff member.'):'Select a staff member to display their goals and KPIs.'
+      }
       if(data.admin){
-        $$('.pg-staff').forEach(select=>select.setAttribute('aria-label','Select staff member for performance goal'))
+        const unique=(key)=>[...new Set(staff.map(x=>String(x[key]??'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b))
+        const exportLists={
+          staff:staff.map(x=>({value:String(x.id),label:x.full_name+' — '+x.email})),
+          division:unique('team').map(x=>({value:x,label:x})),
+          department:unique('role').map(x=>({value:x,label:x})),
+          unit:unique('unit').map(x=>({value:x,label:x})),
+          cadre:[...new Map(staff.filter(x=>x.cadre_id).map(x=>[String(x.cadre_id),{value:String(x.cadre_id),label:String(x.cadre_name||x.cadre||'Cadre #'+x.cadre_id)}])).values()]
+        }
+        $('#pg-export-type').onchange=()=>{
+          const options=exportLists[$('#pg-export-type').value]||[]
+          $('#pg-export-value').innerHTML='<option value="">Select value</option>'+options.map(x=>'<option value="'+esc(x.value)+'">'+esc(x.label)+'</option>').join('')
+        }
+        $('#pg-export-run').onclick=async()=>{
+          const filter=$('#pg-export-type').value,value=$('#pg-export-value').value
+          if(!filter||!value){toast('Select one filter and its value.',true);return}
+          try{
+            const response=await fetch('/api/hcot/performance-goals/export?filter='+encodeURIComponent(filter)+'&value='+encodeURIComponent(value),{credentials:'same-origin'})
+            if(!response.ok){const body=await response.json().catch(()=>({}));throw Error(body.error||'Export failed')}
+            const url=URL.createObjectURL(await response.blob()),link=document.createElement('a')
+            link.href=url;link.download='performance-goals-'+filter+'.csv';document.body.appendChild(link);link.click();link.remove()
+            setTimeout(()=>URL.revokeObjectURL(url),1000)
+          }catch(e){toast(e.message,true)}
+        }
+      }
+      if(data.admin){
+        $('.pg-staff').forEach(select=>select.setAttribute('aria-label','Select staff member for performance goal'))
         $('#pg-add').onclick=async()=>{
           try{
             const row={staff_email:$('#pg-staff').value,goal_title:$('#pg-goal').value,kpi_title:$('#pg-kpi').value,kpi_target:$('#pg-target').value,assessment_cycle:$('#pg-cycle').value,target_date:$('#pg-date').value}
