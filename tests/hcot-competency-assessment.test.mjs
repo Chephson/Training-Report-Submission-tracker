@@ -58,26 +58,24 @@ test('cadre group mapping supports optional organisational scopes without losing
  assert.match(api,/gs.unit IS NULL/)
 })
 
-test('competency group CSV bulk upload is admin-gated and validates scoped mapping rows',()=>{
- assert.match(api,/api.post\('\/hcot\/competency-groups\/import'/)
- assert.match(api,/isHcotCompetencyAdmin\(c,session.email\)/)
- assert.match(api,/validateStaffDirectory\(c.env.DB,div\|\|null,dept\|\|null,unt\|\|null\)/)
- assert.match(api,/Conflicting group assignments/)
- assert.match(api,/INSERT OR IGNORE INTO hcot_cadre_group_scopes/)
- assert.match(ui,/id="hcg-upload-file"/)
- assert.match(ui,/hcot-competency-group-mapping-template\.csv/)
- assert.match(ui,/competency_group,group_description,competency_name,competency_category,cadre,division,department,unit/)
+test('CSV importer validates scoped mappings and creates new competencies in named groups',()=>{
+ const section=api.slice(api.indexOf("api.post('/hcot/competency-groups/import'"),api.indexOf("api.post('/hcot/competency-groups/assign-competency'"))
+ assert.match(section,/isHcotCompetencyAdmin\(c,session.email\)/)
+ assert.match(section,/validateStaffDirectory\(c.env.DB,division\|\|null,department\|\|null,unit\|\|null\)/)
+ assert.match(section,/INSERT INTO hcot_competencies\(name,category,description\)/)
+ assert.match(section,/INSERT OR IGNORE INTO hcot_group_competencies/)
+ assert.match(section,/INSERT OR IGNORE INTO hcot_cadre_group_scopes/)
+ assert.match(ui,/group_code,competency_group,group_description,competency_name,competency_category,competency_description,cadre,division,department,unit/)
 })
-
-test('bulk upload validates competency category and prevents duplicate competency groups',()=>{
- assert.match(ui,/competency_group,group_description,competency_name,competency_category,cadre,division,department,unit/)
- assert.match(api,/competency category must be Core or Functional/)
- assert.match(api,/must match its existing classification/)
- assert.match(api,/WHERE LOWER\(TRIM\(name\)\)=LOWER\(TRIM\(\?\)\)/)
- assert.match(api,/A competency group with this name already exists/)
- assert.match(api,/INSERT INTO hcot_competency_groups\(name,description\) SELECT/)
+test('group codes distinguish same-named groups and existing competency category remains protected',()=>{
+ const section=api.slice(api.indexOf("api.post('/hcot/competency-groups/import'"),api.indexOf("api.post('/hcot/competency-groups/assign-competency'"))
+ assert.match(db,/group_code TEXT NOT NULL UNIQUE COLLATE NOCASE/)
+ assert.match(db,/PRIMARY KEY\(group_id,competency_id\)/)
+ assert.doesNotMatch(db,/competency_id INTEGER NOT NULL UNIQUE/)
+ assert.match(section,/LOWER\(group_code\)=LOWER\(\?\)/)
+ assert.match(section,/must match existing library classification/)
+ assert.match(section,/new_competencies:/)
 })
-
 test('group-scoped competency inheritance is enforced consistently for reading and saving assessments',()=>{
  const get=api.slice(api.indexOf("api.get('/hcot/competency-assessments'"),api.indexOf("api.get('/hcot/effective-competencies'"));
  const post=api.slice(api.indexOf("api.post('/hcot/competency-assessments'"),api.indexOf("api.post('/hcot/competency-assessments'")+3500);
@@ -94,8 +92,8 @@ test('bulk import records the authenticated administrator and summary in the act
  const section=api.slice(api.indexOf("api.post('/hcot/competency-groups/import'"),api.indexOf("api.get('/hcot/competency-assessments'"));
  assert.match(section,/await log\(c\.env\.DB,'hcot_competency_groups_import'/);
  assert.match(section,/session\.email/);
- assert.match(section,/scope_mappings:/);
- assert.match(section,/global_mappings:/);
+ assert.match(section,/new_competencies:/);
+ assert.match(section,/groups:groups.size/);
 });
 
 test('cadre rename and deletion require HCOT administrator and preserve referential integrity',()=>{
