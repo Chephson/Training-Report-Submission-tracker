@@ -1997,6 +1997,36 @@ api.get('/hcot/performance-goals', async c=>{
 
   return c.json({goals:goals.results||[],kpis:kpis.results||[],matches:matches.results||[],competency_targets:targets.results||[],inherited_targets:inheritedTargets.filter(Boolean),admin})
 })
+api.get('/hcot/performance-goals/export',async c=>{
+  const actor=await pgAdmin(c)
+  if(!actor)return c.json({error:'HCOT administrator access required.'},403)
+  const filter=String(c.req.query('filter')||'').trim(),value=String(c.req.query('value')||'').trim()
+  if(!['staff','division','department','unit','cadre'].includes(filter)||!value||value.length>200)return c.json({error:'Select one export filter and a value.'},400)
+  const predicate:Record<string,string>={
+    staff:'CAST(s.id AS TEXT)=?',division:"LOWER(TRIM(COALESCE(s.team,'')))=LOWER(TRIM(?))",
+    department:"LOWER(TRIM(COALESCE(s.role,'')))=LOWER(TRIM(?))",
+    unit:"LOWER(TRIM(COALESCE(s.unit,'')))=LOWER(TRIM(?))",
+    cadre:'CAST(s.cadre_id AS TEXT)=?'
+  }
+  const rows=await c.env.DB.prepare(`SELECT s.full_name,s.email,s.team AS division,s.role AS department,s.unit,ca.name AS cadre,
+    g.id AS goal_id,g.title AS goal,g.cycle,g.target_date,k.id AS kpi_id,k.title AS kpi,k.target_value,
+    m.competency_id,co.name AS competency,m.status AS match_status,
+    ct.target_score AS cycle_target
+    FROM hcot_performance_goals g JOIN staff s ON s.id=g.staff_id
+    LEFT JOIN hcot_cadres ca ON ca.id=s.cadre_id
+    LEFT JOIN hcot_performance_kpis k ON k.goal_id=g.id
+    LEFT JOIN hcot_performance_kpi_competencies m ON m.kpi_id=k.id
+    LEFT JOIN hcot_competencies co ON co.id=m.competency_id
+    LEFT JOIN hcot_competency_targets ct ON ct.staff_id=g.staff_id AND ct.competency_id=m.competency_id AND ct.cycle=g.cycle
+    WHERE ${predicate[filter]} ORDER BY s.full_name,g.cycle,g.id,k.id,co.name`).bind(value).all<any>()
+  const quote=(v:any)=>'"'+String(v??'').replace(/"/g,'""')+'"'
+  const headers=['Staff','Email','Division','Department','Unit','Cadre','Goal ID','Goal','Assessment Cycle','Target Date','KPI ID','KPI','KPI Target','Matched Competency','Match Status','Cycle Competency Target']
+  const fields=['full_name','email','division','department','unit','cadre','goal_id','goal','cycle','target_date','kpi_id','kpi','target_value','competency','match_status','cycle_target']
+  const csv='\uFEFF'+[headers,...(rows.results||[]).map((r:any)=>fields.map(k=>r[k]))].map(row=>row.map(quote).join(',')).join('\r\n')+'\r\n'
+  c.header('Content-Type','text/csv; charset=utf-8')
+  c.header('Content-Disposition','attachment; filename="performance-goals-'+filter+'.csv"')
+  return c.body(csv)
+})
 api.post('/hcot/performance-goals/import', async c=>{
   const actor=await pgAdmin(c)
   if(!actor)return c.json({error:'HCOT administrator access required.'},403)
