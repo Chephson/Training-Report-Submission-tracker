@@ -1662,9 +1662,18 @@ api.get('/hcot/effective-competencies', async c => {
       AND (m.division IS NULL OR LOWER(TRIM(m.division))=LOWER(TRIM(COALESCE(s.team,''))))
       AND (m.department IS NULL OR LOWER(TRIM(m.department))=LOWER(TRIM(COALESCE(s.role,''))))
       AND (m.unit IS NULL OR LOWER(TRIM(m.unit))=LOWER(TRIM(COALESCE(s.unit,''))))
+    ), group_inherited AS (
+      SELECT s.id AS staff_id,gc.competency_id,1 AS inherited,0 AS direct
+      FROM staff s JOIN hcot_group_competencies gc ON s.active=1
+      WHERE EXISTS(SELECT 1 FROM hcot_cadre_groups cg WHERE cg.cadre_id=s.cadre_id AND cg.group_id=gc.group_id)
+        OR EXISTS(SELECT 1 FROM hcot_cadre_group_scopes gs WHERE gs.cadre_id=s.cadre_id AND gs.group_id=gc.group_id
+          AND (gs.division IS NULL OR LOWER(TRIM(gs.division))=LOWER(TRIM(COALESCE(s.team,''))))
+          AND (gs.department IS NULL OR LOWER(TRIM(gs.department))=LOWER(TRIM(COALESCE(s.role,''))))
+          AND (gs.unit IS NULL OR LOWER(TRIM(gs.unit))=LOWER(TRIM(COALESCE(s.unit,'')))))
     ), combined AS (
-      SELECT * FROM inherited UNION ALL
-      SELECT staff_id,competency_id,0 AS inherited,1 AS direct FROM hcot_staff_competencies
+      SELECT * FROM inherited UNION ALL SELECT * FROM group_inherited UNION ALL
+      SELECT d.staff_id,d.competency_id,0 AS inherited,1 AS direct
+      FROM hcot_staff_competencies d JOIN staff s ON s.id=d.staff_id WHERE s.active=1
     )
     SELECT z.staff_id,z.competency_id,MAX(z.inherited) AS inherited,MAX(z.direct) AS direct,
       s.full_name,s.email,s.cadre_id,p.name AS competency_name,p.category
