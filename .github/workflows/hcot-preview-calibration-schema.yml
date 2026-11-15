@@ -1,0 +1,56 @@
+name: HCOT Preview calibrated target schema repair
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: hcot-preview-d1-calibration
+  cancel-in-progress: false
+jobs:
+  migrate-preview-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: feature/hcot-competency-assessment
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Verify Preview database and Pages production isolation
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT_NAME: ${{ vars.CLOUDFLARE_PAGES_PROJECT_NAME }}
+        run: |
+          set -euo pipefail
+          test "$PROJECT_NAME" = "training-report-submission-tracker"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test "$(node -e "console.log(JSON.parse(require('fs').readFileSync('wrangler.jsonc','utf8')).env.preview.d1_databases[0].database_id)")" = "26b2a079-accf-4d05-bf1c-c1e8ca523e1e"
+          curl --fail --silent --show-error -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT_NAME" > /tmp/project.json
+          jq -e '.success == true and .result.production_branch == "main"' /tmp/project.json >/dev/null
+          jq -e --arg id "26b2a079-accf-4d05-bf1c-c1e8ca523e1e" '.result.deployment_configs.preview.d1_databases.DB as $d | ($d != null) and (($d.id // $d.database_id // "") == $id)' /tmp/project.json >/dev/null
+      - name: Capture Preview D1 recovery bookmark and original row count
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx wrangler d1 time-travel info DB --env preview
+          npx wrangler d1 execute DB --env preview --remote --command "SELECT COUNT(*) AS mapping_count FROM hcot_mapping_competency_targets;"
+      - name: Apply range-based target constraints to Preview D1 only
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler d1 execute DB --env preview --remote --file migrations/0004_hcot_calibrated_mapping_targets.sql
+      - name: Verify preserved mappings and new schema
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute DB --env preview --remote --command "SELECT COUNT(*) AS mapping_count FROM hcot_mapping_competency_targets;"
+          npx wrangler d1 execute DB --env preview --remote --command "SELECT sql FROM sqlite_master WHERE type='table' AND name='hcot_mapping_competency_targets';"
