@@ -12,6 +12,8 @@ on:
       - tests/hcot-cadre-inheritance.test.mjs
       - tests/hcot-evaluations-export.test.mjs
       - tests/hcot-group-codes-import.test.mjs
+      - tests/hcot-admin-controls-navigation.test.mjs
+      - src/index.tsx
       - migrations/0004_hcot_group_codes_multi_membership.sql
       - src/lib/db.ts
   workflow_dispatch:
