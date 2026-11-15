@@ -159,6 +159,21 @@ api.get('/session', async (c) => {
   return c.json({ locked: !!code, org_name: await getSetting(c.env.DB, 'org_name', '') })
 })
 
+/* Human-facing tracker modules are reserved for verified HCOT administrators.
+   The existing /ingest/* integration, /login and /session bootstrap endpoints remain
+   separate from this role gate. HCOT line-manager endpoints keep their own scoped checks.
+   A shared tracker access code is not administrator authorization. */
+api.use('/*', async (c,next)=>{
+  const path=c.req.path.replace(/^\\/api/,'')
+  if(path==='/login'||path==='/session'||path.startsWith('/ingest/')||path==='/hcot'||path.startsWith('/hcot/'))return next()
+  if(!c.env.HCOT_ACCESS_TEAM_DOMAIN?.trim()||!c.env.HCOT_ACCESS_AUD?.trim())return c.json({error:'HCOT Access configuration required.'},503)
+  const identity=await verifyAccessJwt(c.req.raw,c.env)
+  if(!identity)return c.json({error:'Verified HCOT administrator identity required.'},401)
+  const admins=(c.env.HCOT_SETTINGS_ADMIN_EMAILS||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean)
+  if(!admins.includes(identity.email.trim().toLowerCase()))return c.json({error:'HCOT administrator access required. Use the Line Managers/Supervisors gateway.'},403)
+  return next()
+})
+
 /* P0: HCOT least-privilege authorization. The shared tracker access code is NOT a role.
    All HCOT requests first pass the verified Cloudflare Access JWT gate.
    Stage 1: verified HR viewers may read only explicitly allowlisted HCOT resources.
