@@ -1579,7 +1579,7 @@ async function renderHCOT(el) {
       toast('Draft training plan created');renderHCOT(el)
     }catch(e){toast(e.message,true)}
   }
-  $('.hcot-delete').forEach(btn=>btn.onclick=async()=>{
+  $$('.hcot-delete').forEach(btn=>btn.onclick=async()=>{
     const plan=plans.find(p=>p.id===Number(btn.dataset.id))
     if(!plan||plan.status!=='draft')return
     if(!window.confirm('Permanently delete draft training plan "'+plan.title+'"? Assigned participants will be removed. This cannot be undone.'))return
@@ -1589,7 +1589,7 @@ async function renderHCOT(el) {
       renderHCOT(el)
     }catch(e){toast(e.message,true)}
   })
-  $('.hcot-edit').forEach(btn=>btn.onclick=()=>{
+  $$('.hcot-edit').forEach(btn=>btn.onclick=()=>{
     const plan=plans.find(p=>p.id===Number(btn.dataset.id))
     if(!plan || plan.status!=='draft')return
     const container=$('#hcot-participants')
