@@ -1306,7 +1306,7 @@ async function renderHCOTSection(section) {
       }
     }else if(section==='goals'){
       const [data,roster,legacy]=await Promise.all([api('/hcot/performance-goals'),api('/staff'),api('/hcot/goals')])
-      const staff=(roster.staff||[]).filter(x=>Number(x.active)===1)
+      const staff=roster.staff||[]
       const goals=data.goals||[],kpis=data.kpis||[],matches=data.matches||[]
       const competencyTargets=new Map((data.competency_targets||[]).map(t=>[t.staff_id+'|'+t.cycle+'|'+t.competency_id,t.target_score]))
       const inheritedGoalsTargets=new Map((data.inherited_targets||[]).filter(t=>t.target_score!==undefined).map(t=>[t.staff_id+'|'+t.competency_id,t.target_score]))
