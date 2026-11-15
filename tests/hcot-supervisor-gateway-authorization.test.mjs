@@ -21,7 +21,7 @@ test('manager endpoints require verified identity and mapped staff on both read 
   assert.match(post,/isAssignedToManager/)
 })
 test('supervisor gateway remains the only non-admin navigation route',()=>{
-  assert.match(ui,/state\.hcotRole==='supervisor' && view!=='supervisors'/)
+  assert.match(ui,/state\.hcotRole!=='admin' && view!=='supervisors'/)
   assert.match(ui,/link\.dataset\.view!=='supervisors'/)
   assert.match(ui,/renderSupervisorGateway/)
 })
