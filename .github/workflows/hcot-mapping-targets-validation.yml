@@ -8,8 +8,9 @@ on:
       - src/api.ts
       - public/static/app.js
       - migrations/0003_hcot_mapping_competency_targets.sql
-      - tests/hcot-mapping-target-policy.test.mjs
+      - tests/hcot-mapping-target-policy.test.mjs tests/hcot-evaluations-export.test.mjs
       - tests/hcot-cadre-inheritance.test.mjs
+      - tests/hcot-evaluations-export.test.mjs
   workflow_dispatch:
 permissions:
   contents: read
