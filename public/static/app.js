@@ -1305,7 +1305,7 @@ async function renderHCOTSection(section) {
             renderHCOTSection('goals')
           }catch(e){toast(e.message,true)}
         })
-        $('.pg-set-target').forEach(btn=>btn.onclick=async()=>{
+        $$('.pg-set-target').forEach(btn=>btn.onclick=async()=>{
           const key=btn.dataset.staff+'|'+btn.dataset.cycle+'|'+btn.dataset.comp
           const current=competencyTargets.get(key)
           const entered=prompt('Competency target score (0–100) for this staff member and cycle',current===undefined?'':String(current))
@@ -1317,7 +1317,7 @@ async function renderHCOTSection(section) {
             toast('Competency target saved: '+target+' ('+competenceLevel(target)+')');renderHCOTSection('goals')
           }catch(e){toast(e.message,true)}
         })
-        $('.pg-review').forEach(btn=>btn.onclick=async()=>{
+        $$('.pg-review').forEach(btn=>btn.onclick=async()=>{
           try{await api('/hcot/performance-goals/review',{method:'POST',body:JSON.stringify({kpi_id:Number(btn.dataset.kpi),competency_id:Number(btn.dataset.comp),status:btn.dataset.status})});renderHCOTSection('goals')}
           catch(e){toast(e.message,true)}
         })
