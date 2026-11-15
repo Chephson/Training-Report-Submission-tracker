@@ -13,6 +13,7 @@ on:
       - tests/hcot-evaluations-export.test.mjs
       - tests/hcot-group-codes-import.test.mjs
       - tests/hcot-admin-controls-navigation.test.mjs
+      - tests/hcot-supervisor-gateway-authorization.test.mjs
       - src/index.tsx
       - migrations/0004_hcot_group_codes_multi_membership.sql
       - src/lib/db.ts
