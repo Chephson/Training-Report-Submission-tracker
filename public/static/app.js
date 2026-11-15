@@ -48,6 +48,7 @@ const state = {
   staff: [],
   filters: { q: '', team: '', status: 'all' },
   settings: {},
+  hcotRole: null,
 }
 
 /* ---------------- api ---------------- */
@@ -172,6 +173,19 @@ async function boot() {
   $('#gate').hidden = true
   $('#shell').hidden = false
 
+  // Verify the Cloudflare Access identity before requesting any administrative dashboard data.
+  const access=await api('/hcot/access-session')
+  state.hcotRole=access.role==='admin'?'admin':'supervisor'
+  $('.nav a').forEach(link=>{
+    if(link.dataset.view)link.hidden=state.hcotRole!=='admin'&&link.dataset.view!=='supervisors'
+  })
+  $('#period-picker').hidden=state.hcotRole!=='admin'
+  if(state.hcotRole!=='admin'){
+    const hash=(location.hash.replace(/^#\\/?/, '').split('?')[0])||'supervisors'
+    navigate(hash==='supervisors'?hash:'supervisors',true)
+    return
+  }
+
   const [periodsRes, settingsRes] = await Promise.all([api('/periods'), api('/settings')])
   state.periods = periodsRes.periods || []
   state.settings = settingsRes.settings || {}
@@ -228,9 +242,10 @@ const ROUTES = {
 }
 
 function navigate(view, initial) {
-  if (!ROUTES[view]) view = 'dashboard'
+  if (state.hcotRole==='supervisor' && view!=='supervisors') view='supervisors'
+  if (!ROUTES[view]) view = state.hcotRole==='supervisor'?'supervisors':'dashboard'
   state.view = view
-  if (!initial) location.hash = '#/' + view
+  if (!initial || (state.hcotRole==='supervisor' && location.hash!=='#/supervisors')) location.hash = '#/' + view
 
   $$('.nav a').forEach((a) => a.classList.toggle('active', a.dataset.view === view))
   const route = ROUTES[view]
