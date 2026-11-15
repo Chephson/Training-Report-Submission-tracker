@@ -1579,14 +1579,14 @@ async function renderHCOT(el) {
       toast('Draft training plan created');renderHCOT(el)
     }catch(e){toast(e.message,true)}
   }
-  $('.hcot-approval').forEach(select=>select.onchange=async()=>{
+  $$('.hcot-approval').forEach(select=>select.onchange=async()=>{
     const id=Number(select.dataset.id),previous=plans.find(p=>p.id===id)?.status==='approved'?'Approved':'Pending Approval'
     if(select.value==='Approved'&&!confirm('Approve this plan and assign all participants in Programme Assignments for the active reporting period?')){select.value=previous;return}
     select.disabled=true
     try{const r=await api('/hcot/plans/'+id+'/approval',{method:'PATCH',body:JSON.stringify({approval_status:select.value})});toast('Approval status: '+r.approval_status);renderHCOT(el)}
     catch(e){select.value=previous;select.disabled=false;toast(e.message,true)}
   })
-  $('.hcot-export-plan').forEach(btn=>btn.onclick=async()=>{
+  $$('.hcot-export-plan').forEach(btn=>btn.onclick=async()=>{
     try{
       const response=await fetch('/api/hcot/plans/'+btn.dataset.id+'/export',{credentials:'same-origin'})
       if(!response.ok){const body=await response.json().catch(()=>({}));throw new Error(body.error||'Export failed')}
