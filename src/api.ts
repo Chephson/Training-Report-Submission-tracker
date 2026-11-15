@@ -1416,6 +1416,24 @@ api.get('/hcot/line-manager/assessment-requests', async c=>{
   const requests=await c.env.DB.prepare('SELECT r.id,r.cycle,r.requested_at,r.status, GROUP_CONCAT(s.full_name, ', ') AS staff_names FROM hcot_assessment_requests r LEFT JOIN hcot_assessment_request_staff t ON t.request_id=r.id LEFT JOIN staff s ON s.id=t.staff_id WHERE r.manager_email=? GROUP BY r.id ORDER BY r.requested_at DESC,r.id DESC LIMIT 100').bind(manager.email).all()
   return c.json({requests:requests.results||[]})
 })
+// Administrator-owned, per-staff, per-cycle competency targets; never sourced from a supervisor request.
+api.put('/hcot/performance-goals/competency-target', async c=>{
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const b=await c.req.json<{staff_id?:number;competency_id?:number;cycle?:string;target_score?:number}>().catch(()=>({}))
+  const staffId=Number(b.staff_id),competencyId=Number(b.competency_id),cycle=String(b.cycle||'').trim(),target=Number(b.target_score)
+  if(!Number.isSafeInteger(staffId)||staffId<1||!Number.isSafeInteger(competencyId)||competencyId<1||!cycle||cycle.length>80||!Number.isInteger(target)||target<0||target>100)
+    return c.json({error:'Provide staff, competency, cycle and target score (whole number 0–100).'},400)
+  const approved=await c.env.DB.prepare(`SELECT 1 AS ok FROM hcot_performance_kpi_competencies m
+    JOIN hcot_performance_kpis k ON k.id=m.kpi_id JOIN hcot_performance_goals g ON g.id=k.goal_id
+    WHERE g.staff_id=? AND g.cycle=? AND m.competency_id=? AND m.status='approved' LIMIT 1`).bind(staffId,cycle,competencyId).first()
+  if(!approved)return c.json({error:'Approve this competency under the staff performance goal before setting a target.'},409)
+  await c.env.DB.prepare(`INSERT INTO hcot_competency_targets(staff_id,competency_id,cycle,target_score,set_by,updated_at)
+    VALUES(?,?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(staff_id,competency_id,cycle)
+    DO UPDATE SET target_score=excluded.target_score,set_by=excluded.set_by,updated_at=CURRENT_TIMESTAMP`).bind(staffId,competencyId,cycle,target,session.email).run()
+  return c.json({ok:true,target_score:target})
+})
+
 api.get('/hcot/competency-assessments', async c => {
   const manager=await requireAssessmentManager(c)
   if(manager.error)return c.json({error:manager.error},manager.status as 401|403)
@@ -1461,6 +1479,7 @@ api.get('/hcot/competency-assessments', async c => {
         AND (gs.department IS NULL OR LOWER(TRIM(gs.department))=LOWER(TRIM(COALESCE(s.role,''))))
         AND (gs.unit IS NULL OR LOWER(TRIM(gs.unit))=LOWER(TRIM(COALESCE(s.unit,'')))))
     ) ORDER BY g.name COLLATE NOCASE`).bind(staffId).all()
+  const targets=await c.env.DB.prepare('SELECT competency_id,cycle,target_score FROM hcot_competency_targets WHERE staff_id=?').bind(staffId).all()
   const history=await c.env.DB.prepare(`SELECT a.*,p.name AS competency_name,p.category FROM hcot_competency_assessments a
     JOIN hcot_competencies p ON p.id=a.competency_id WHERE a.staff_id=?
     ORDER BY a.assessed_at DESC,a.id DESC LIMIT 500`).bind(staffId).all()
@@ -1500,16 +1519,16 @@ api.get('/hcot/competency-assessments', async c => {
         complete:values.length===relevant.length})
     }
   }
-  return c.json({staff,competencies:eligible.results||[],groups:linkedGroups.results||[],assessments:history.results||[],group_scores:groupScores,performance_matches:pgMatches.results||[],performance_goals_assigned:(pgCount?.n||0)>0})
+  return c.json({staff,competencies:eligible.results||[],groups:linkedGroups.results||[],assessments:history.results||[],group_scores:groupScores,competency_targets:targets.results||[],performance_matches:pgMatches.results||[],performance_goals_assigned:(pgCount?.n||0)>0})
 })
 api.post('/hcot/competency-assessments', async c => {
   const manager=await requireAssessmentManager(c)
   if(manager.error)return c.json({error:manager.error},manager.status as 401|403)
   const b=await c.req.json<{staff_id?:number;competency_id?:number;cycle?:string;score?:number;target_score?:number;notes?:string}>().catch(()=>({}))
-  const staffId=Number(b.staff_id),competencyId=Number(b.competency_id),score=Number(b.score),target=b.target_score===undefined?70:Number(b.target_score)
+  const staffId=Number(b.staff_id),competencyId=Number(b.competency_id),score=Number(b.score)
   const cycle=String(b.cycle||'').trim(),notes=String(b.notes||'').trim()
   if(!Number.isSafeInteger(staffId)||staffId<=0||!Number.isSafeInteger(competencyId)||competencyId<=0)return c.json({error:'Select staff and competency.'},400)
-  if(!Number.isInteger(score)||score<0||score>100||!Number.isInteger(target)||target<0||target>100)return c.json({error:'Scores and targets must be whole numbers from 0 to 100.'},400)
+  if(!Number.isInteger(score)||score<0||score>100return c.json({error:'Assessment score must be a whole number from 0 to 100.'},400)
   if(!cycle||cycle.length>80||notes.length>2000)return c.json({error:'Invalid assessment cycle or notes.'},400)
   if(!(await isAssignedToManager(c,staffId,manager.email!)))return c.json({error:'Staff member is not assigned to this line manager.'},403)
   const eligible=await c.env.DB.prepare(`SELECT 1 AS eligible FROM staff s
@@ -1536,6 +1555,9 @@ api.post('/hcot/competency-assessments', async c => {
       WHERE g.staff_id=? AND g.cycle=? AND m.competency_id=? AND m.status='approved' LIMIT 1`).bind(staffId,cycle,competencyId).first()
     if(!approved)return c.json({error:'Competency is not approved for the staff performance goals in this assessment cycle.'},409)
   }
+  const savedTarget=await c.env.DB.prepare('SELECT target_score FROM hcot_competency_targets WHERE staff_id=? AND competency_id=? AND cycle=?').bind(staffId,competencyId,cycle).first<{target_score:number}>()
+  if(!savedTarget)return c.json({error:'HCOT administrator must set a competency target score for this staff member and cycle before assessment.'},409)
+  const target=savedTarget.target_score
   const result=await c.env.DB.prepare(`INSERT INTO hcot_competency_assessments(staff_id,competency_id,cycle,score,target_score,assessor_email,notes)
     VALUES(?,?,?,?,?,?,?)`).bind(staffId,competencyId,cycle,score,target,manager.email,notes||null).run()
   return c.json({ok:true,id:result.meta.last_row_id},201)
