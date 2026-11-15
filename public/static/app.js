@@ -235,7 +235,7 @@ const ROUTES = {
   tracker: { title: 'Submission tracker', sub: 'Filter outstanding and submitted reports by training programme', render: renderTracker },
   programmes: { title: 'Programme assignments', sub: 'Manage assignments and outstanding reports', render: renderProgrammes },
   outstanding: { title: 'Outstanding reports', sub: 'Track incomplete training reports for each employee and programme', render: renderOutstandingReports },
-  hcot: { title: 'HCOT Training Monitor', sub: 'Training planning workspace (integration preview)', render: renderHCOT },
+  hcot: { title: 'Admin Controls', sub: 'HCOT administration and management workspace', render: renderHCOT },
   supervisors: { title: 'Line Managers/Supervisors', sub: 'Your assigned staff, assessment requests and competency assessments', render: renderSupervisorGateway },
   history: { title: 'Staff training history', sub: 'A consolidated record of training programmes reported by staff', render: renderTrainingHistory },
   inbox: { title: 'Unmatched responses', sub: 'Submissions we could not attribute to anyone on the roster', render: renderInbox },
@@ -245,7 +245,7 @@ const ROUTES = {
 }
 
 function navigate(view, initial) {
-  if (state.hcotRole==='supervisor' && view!=='supervisors') view='supervisors'
+  if (state.hcotRole!=='admin' && view!=='supervisors') view='supervisors'
   if (!ROUTES[view]) view = state.hcotRole==='supervisor'?'supervisors':'dashboard'
   state.view = view
   if (!initial || (state.hcotRole==='supervisor' && location.hash!=='#/supervisors')) location.hash = '#/' + view
@@ -255,10 +255,13 @@ function navigate(view, initial) {
   $('#page-title').textContent = route.title
   $('#page-sub').textContent = route.sub
   $('#topbar-actions').innerHTML = ''
-  document.title = `${route.title} · Training Report Tracker`
+  document.title = `${route.title} · HCD_HCOT Solution`
 
   const el = $('#view')
   el.innerHTML = `<div class="empty"><p class="muted">Loading…</p></div>`
+  if(['roster','setup','settings'].includes(view) && state.hcotRole==='admin'){
+    $('#topbar-actions').innerHTML='<a class="btn" href="#/hcot">Back to Admin Controls</a>'
+  }
   Promise.resolve(route.render(el)).catch((e) => {
     if (e.message === 'locked') return
     el.innerHTML = `<div class="notice notice-bad"><span class="nicon">${ico('alert')}</span><div><strong>Could not load this page</strong>${esc(e.message)}</div></div>`
@@ -270,7 +273,7 @@ const hcotNav=document.querySelector('.nav')
 if(hcotNav&&!hcotNav.querySelector('[data-view="hcot"]')){
   const link=document.createElement('a')
   link.href='#/hcot';link.dataset.view='hcot'
-  link.innerHTML=ico('file',18)+'<span>HCOT Training Monitor</span>'
+  link.innerHTML=ico('file',18)+'<span>Admin Controls</span>'
   const after=hcotNav.querySelector('[data-view="programmes"]')
   if(after)after.insertAdjacentElement('afterend',link);else hcotNav.appendChild(link)
 }
@@ -1560,9 +1563,10 @@ async function renderHCOT(el) {
     renderHCOTSection('calendar')
     return
   }
+  const adminUtilities='<div class="card mt-16"><div class="card-head"><h3>Administration</h3><p>Standalone administrative tools</p></div><div class="card-body"><div style="display:flex;gap:10px;flex-wrap:wrap"><a class="btn" href="#/settings">Settings</a><a class="btn" href="#/setup">Forms Connection</a><a class="btn" href="#/roster">Staff Roster</a></div></div></div>'
   const [data,roster]=await Promise.all([api('/hcot/plans'),api('/staff')])
   const plans=data.plans||[],staff=roster.staff||[]
-  el.innerHTML='<div class="card"><div class="card-body"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn hcot-tab" data-section="calendar">Calendar</button><button class="btn hcot-tab" data-section="competencies">Competencies</button><button class="btn hcot-tab" data-section="line-managers">Line Manager Mapping</button><button class="btn hcot-tab" data-section="assessments">My Staff Assessments</button><button class="btn hcot-tab" data-section="goals">Performance Goals</button><button class="btn hcot-tab" data-section="reviews">Evaluations</button><button class="btn hcot-tab" data-section="costing">Costing</button><button class="btn hcot-tab" data-section="handshake">Tracker handshake</button><button class="btn hcot-tab" data-section="identity">Staff identity audit</button></div></div></div><div id="hcot-extra" class="mt-16"></div><div id="hcot-calendar-planning"><div class="card mt-16"><div class="card-head"><div><h3>HCOT Training Monitor — Training planning</h3><p>Unified workspace preview. Draft plans do not automatically create report assignments.</p></div></div><div class="card-body"><label class="field"><span>Training programme title</span><input id="hcot-title" placeholder="Enter training title"></label><div class="grid grid-2"><label class="field"><span>Start date</span><input id="hcot-start" type="date"></label><label class="field"><span>End date</span><input id="hcot-end" type="date"></label></div><label class="field"><span>Location</span><input id="hcot-location"></label><label class="field"><span>Provider</span><input id="hcot-provider"></label><button class="btn btn-primary" id="hcot-create">Create draft training plan</button></div></div>'+
+  el.innerHTML=adminUtilities+'<div class="card"><div class="card-body"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn hcot-tab" data-section="calendar">Calendar</button><button class="btn hcot-tab" data-section="competencies">Competencies</button><button class="btn hcot-tab" data-section="line-managers">Line Manager Mapping</button><button class="btn hcot-tab" data-section="assessments">My Staff Assessments</button><button class="btn hcot-tab" data-section="goals">Performance Goals</button><button class="btn hcot-tab" data-section="reviews">Evaluations</button><button class="btn hcot-tab" data-section="costing">Costing</button><button class="btn hcot-tab" data-section="handshake">Tracker handshake</button><button class="btn hcot-tab" data-section="identity">Staff identity audit</button></div></div></div><div id="hcot-extra" class="mt-16"></div><div id="hcot-calendar-planning"><div class="card mt-16"><div class="card-head"><div><h3>HCOT Training Monitor — Training planning</h3><p>Unified workspace preview. Draft plans do not automatically create report assignments.</p></div></div><div class="card-body"><label class="field"><span>Training programme title</span><input id="hcot-title" placeholder="Enter training title"></label><div class="grid grid-2"><label class="field"><span>Start date</span><input id="hcot-start" type="date"></label><label class="field"><span>End date</span><input id="hcot-end" type="date"></label></div><label class="field"><span>Location</span><input id="hcot-location"></label><label class="field"><span>Provider</span><input id="hcot-provider"></label><button class="btn btn-primary" id="hcot-create">Create draft training plan</button></div></div>'+
   '<div class="card mt-16"><div class="card-head"><h3>HCOT draft training plans</h3></div><div class="table-wrap"><table><thead><tr><th>Training</th><th>Dates</th><th>Location</th><th>Participants</th><th></th></tr></thead><tbody>'+
   plans.map(p=>'<tr><td>'+esc(p.title)+'</td><td>'+esc(p.start_date||'—')+' – '+esc(p.end_date||'—')+'</td><td>'+esc(p.location||'—')+'</td><td>'+p.participant_count+'</td><td>'+(p.status==='draft'?'<button class="btn btn-sm hcot-edit" data-id="'+p.id+'">Edit draft</button> ':'')+'<button class="btn btn-sm hcot-manage" data-id="'+p.id+'">Manage participants</button></td></tr>').join('')+
   (plans.length?'':'<tr><td colspan="5">No draft training plans yet.</td></tr>')+'</tbody></table></div></div><div id="hcot-participants" class="mt-16"></div></div>'
