@@ -8,6 +8,7 @@ on:
       - src/api.ts
       - public/static/app.js
       - migrations/0003_hcot_mapping_competency_targets.sql
+      - tests/hcot-mapping-target-policy.test.mjs
   workflow_dispatch:
 permissions:
   contents: read
@@ -27,4 +28,4 @@ jobs:
           node --check public/static/app.js
       - name: Run HCOT regression tests (no Cloudflare access)
         run: |
-          node --test tests/hcot-competence-levels.test.mjs tests/hcot-competency-assessment.test.mjs tests/hcot-cadre-inheritance.test.mjs tests/hcot-supervisor-gateway-authorization.test.mjs
+          node --test tests/hcot-competence-levels.test.mjs tests/hcot-competency-assessment.test.mjs tests/hcot-cadre-inheritance.test.mjs tests/hcot-supervisor-gateway-authorization.test.mjs tests/hcot-mapping-target-policy.test.mjs
