@@ -18,7 +18,8 @@ test('cadre changes and rule changes require HCOT admin',()=>{
 test('effective competencies include inherited and direct mappings without duplicate staff competency pairs',()=>{
  assert.match(api,/api\.get\('\/hcot\/effective-competencies'/)
  assert.match(api,/JOIN hcot_cadre_competencies m ON m\.cadre_id=s\.cadre_id/)
- assert.match(api,/SELECT staff_id,competency_id,0 AS inherited,1 AS direct FROM hcot_staff_competencies/)
+ assert.match(api,/SELECT d.staff_id,d.competency_id,0 AS inherited,1 AS direct/) 
+ assert.match(api,/FROM hcot_staff_competencies d JOIN staff s ON s.id=d.staff_id WHERE s.active=1/)
  assert.match(api,/GROUP BY z\.staff_id,z\.competency_id/)
  assert.match(api,/MAX\(z\.inherited\) AS inherited,MAX\(z\.direct\) AS direct/)
 })
