@@ -79,7 +79,9 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          npx wrangler d1 execute report-tracker-hcot-preview --remote --file migrations/0002_hcot_competency_targets.sql
+          # Use the explicit Preview environment's DB binding, not the default production DB binding.
+          # Cloudflare token must have D1 Write/Edit permission for this account.
+          npx wrangler d1 execute DB --env preview --remote --file migrations/0002_hcot_competency_targets.sql
 
       - name: Deploy approved commit to HCOT Preview only
         env:
