@@ -1617,7 +1617,7 @@ async function renderHCOT(el) {
       setTimeout(()=>URL.revokeObjectURL(url),1000)
     }catch(e){toast(e.message,true)}
   })
-  $('.hcot-delete').forEach(btn=>btn.onclick=async()=>{
+  $$('.hcot-delete').forEach(btn=>btn.onclick=async()=>{
     const plan=plans.find(p=>p.id===Number(btn.dataset.id))
     if(!plan||plan.status!=='draft')return
     if(!window.confirm('Permanently delete draft training plan "'+plan.title+'"? Assigned participants will be removed. This cannot be undone.'))return
