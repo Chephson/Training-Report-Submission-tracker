@@ -17,7 +17,7 @@ test('supervisor and admin assessment views show numeric scores and levels',()=>
   assert.match(source,/competenceScore\(x\.score\)/)
   assert.match(source,/competenceScore\(x\.target_score\)/)
   assert.match(source,/competenceLevel\(g\.average_score\)/)
-  assert.match(source,/hca-target-level/)
+  assert.match(source,/Competency targets are set by HCOT administrators/)
   assert.match(source,/hca-score-level/)
   assert.match(source,/Assessment recorded:.*competenceLevel\(score\)/)
 })
