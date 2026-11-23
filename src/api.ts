@@ -1218,7 +1218,7 @@ api.post('/hcot/competency-groups/assign-cadre', async c => {
   return c.json({ok:true})
 })
 api.get('/hcot/competencies', async c => {
-  const rows=await c.env.DB.prepare('SELECT * FROM hcot_competencies ORDER BY name COLLATE NOCASE').all()
+  const rows=await c.env.DB.prepare('SELECT * FROM hcot_competencies WHERE archived_at IS NULL ORDER BY name COLLATE NOCASE').all()
   return c.json({competencies:rows.results||[]})
 })
 api.post('/hcot/competencies', async c => {
@@ -1266,15 +1266,21 @@ api.patch('/hcot/competencies/:id', async c => {
 })
 api.delete('/hcot/competencies/:id', async c => {
   const session=await verifyAccessJwt(c.req.raw,c.env)
-  if(!session || !(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
   const id=Number(c.req.param('id'))
   if(!Number.isSafeInteger(id)||id<=0)return c.json({error:'Invalid competency ID.'},400)
-  const existing=await c.env.DB.prepare('SELECT id FROM hcot_competencies WHERE id=?').bind(id).first()
-  if(!existing)return c.json({error:'Competency not found.'},404)
-  const mapped=await c.env.DB.prepare('SELECT COUNT(*) AS total FROM hcot_staff_competencies WHERE competency_id=?').bind(id).first<{total:number}>()
-  if(Number(mapped?.total||0)>0)return c.json({error:'This competency is assigned to staff. Remove its staff assignments before deleting it.'},409)
-  await c.env.DB.prepare('DELETE FROM hcot_competencies WHERE id=? AND NOT EXISTS (SELECT 1 FROM hcot_staff_competencies WHERE competency_id=?)').bind(id,id).run()
-  return c.json({ok:true})
+  const existing=await c.env.DB.prepare('SELECT id,name,archived_at FROM hcot_competencies WHERE id=?').bind(id).first<{id:number;name:string;archived_at:string|null}>()
+  if(!existing||existing.archived_at)return c.json({error:'Active competency not found.'},404)
+  // Archive the library entry rather than deleting the row referenced by completed assessments or KPIs.
+  // Clear current direct/cadre/group links only; preserve historical assessments and performance records.
+  const results=await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE hcot_competencies SET archived_at=CURRENT_TIMESTAMP,archived_by=? WHERE id=? AND archived_at IS NULL').bind(session.email,id),
+    c.env.DB.prepare('DELETE FROM hcot_staff_competencies WHERE competency_id=?').bind(id),
+    c.env.DB.prepare('DELETE FROM hcot_cadre_competencies WHERE competency_id=?').bind(id),
+    c.env.DB.prepare('DELETE FROM hcot_group_competencies WHERE competency_id=?').bind(id),
+    c.env.DB.prepare('INSERT INTO activity(event,detail,actor) VALUES(?,?,?)').bind('hcot.competency.archived',JSON.stringify({competency_id:id,name:existing.name,history_preserved:true}),session.email)
+  ])
+  return c.json({ok:true,archived:true,removed_active_links:results.slice(1,4).map(x=>x.meta?.changes||0),history_preserved:true})
 })
 
 /* Staff identities come exclusively from the central Staff Roster. */
