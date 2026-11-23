@@ -1100,6 +1100,18 @@ api.delete('/hcot/competency-groups/:id',async c=>{
   await log(c.env.DB,'hcot.group.deleted','Competency group #'+id+': '+group.name,actor.email)
   return c.json({ok:true})
 })
+api.delete('/hcot/competency-groups/:id/competencies/:competencyId',async c=>{
+  const actor=await verifyAccessJwt(c.req.raw,c.env)
+  if(!actor||!(await isHcotCompetencyAdmin(c,actor.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const groupId=Number(c.req.param('id')),competencyId=Number(c.req.param('competencyId'))
+  if(!Number.isSafeInteger(groupId)||groupId<=0||!Number.isSafeInteger(competencyId)||competencyId<=0)return c.json({error:'Invalid group or competency.'},400)
+  const result=await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM hcot_group_competencies WHERE group_id=? AND competency_id=?').bind(groupId,competencyId),
+    c.env.DB.prepare('INSERT INTO activity(event,detail,actor) VALUES(?,?,?)').bind('hcot.group.competency.unlinked',JSON.stringify({group_id:groupId,competency_id:competencyId}),actor.email)
+  ])
+  if(!result[0].meta.changes)return c.json({error:'Competency is not linked to this group.'},404)
+  return c.json({ok:true,library_preserved:true,historical_assessments_preserved:true})
+})
 api.post('/hcot/competency-groups/import',async c=>{
   const session=await verifyAccessJwt(c.req.raw,c.env)
   if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
