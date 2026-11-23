@@ -1329,8 +1329,8 @@ async function renderHCOTSection(section) {
         })
         $$('.hcot-comp-delete').forEach(btn=>btn.onclick=async()=>{
           const c=comps.find(x=>String(x.id)===btn.dataset.id)
-          if(!c||!confirm('Delete competency "'+c.name+'"? This cannot be undone. Assigned competencies must be unmapped first.'))return
-          try{await api('/hcot/competencies/'+c.id,{method:'DELETE'});toast('Competency deleted');renderHCOTSection('competencies')}
+          if(!c||!confirm('Remove competency "'+c.name+'" from the active library? Current mappings will be cleared. Historical assessments and performance records will be preserved.'))return
+          try{await api('/hcot/competencies/'+c.id,{method:'DELETE'});toast('Competency removed from active library');renderHCOTSection('competencies')}
           catch(e){toast(e.message,true)}
         })
         $('#hcot-comp-add').onclick=async()=>{try{
