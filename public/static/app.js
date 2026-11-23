@@ -1858,7 +1858,7 @@ async function renderRoster(el) {
   $$('[data-del]', el).forEach((b) =>
     b.addEventListener('click', async () => {
       const s = state.staff.find((x) => x.id === Number(b.dataset.del))
-      if (!confirm(`Remove ${s.full_name} from the roster? Their submission records for all periods will also be deleted.`)) return
+      if (!confirm(`Remove ${s.full_name} from the roster? Their historical reports and assessments will be preserved in an archived profile.`)) return
       await api('/staff/' + s.id, { method: 'DELETE' })
       toast('Removed')
       navigate('roster', true)
