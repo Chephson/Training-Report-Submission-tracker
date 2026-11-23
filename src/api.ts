@@ -476,7 +476,7 @@ api.post('/hcot/preview-roster-reset/execute', async c => {
 })
 api.get('/staff', async (c) => {
   const rows = await c.env.DB.prepare(
-    'SELECT * FROM staff ORDER BY full_name COLLATE NOCASE'
+    'SELECT * FROM staff WHERE archived_at IS NULL ORDER BY full_name COLLATE NOCASE'
   ).all<Staff>()
   return c.json({ staff: rows.results ?? [] })
 })
@@ -521,11 +521,41 @@ api.patch('/staff/:id', async (c) => {
   return c.json({ ok: true })
 })
 
-api.delete('/staff/:id', async (c) => {
-  const id = Number(c.req.param('id'))
-  await c.env.DB.prepare('DELETE FROM submissions WHERE staff_id = ?').bind(id).run()
-  await c.env.DB.prepare('DELETE FROM staff WHERE id = ?').bind(id).run()
-  return c.json({ ok: true })
+/* Roster removal is archival: historical foreign keys and submissions remain intact. */
+api.delete('/staff/:id', async c => {
+  const id=Number(c.req.param('id'))
+  if(!Number.isSafeInteger(id)||id<=0)return c.json({error:'Invalid staff ID.'},400)
+  const identity=await verifyAccessJwt(c.req.raw,c.env)
+  if(!identity||!(await isHcotCompetencyAdmin(c,identity.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const person=await c.env.DB.prepare('SELECT id,full_name,archived_at FROM staff WHERE id=?').bind(id).first<{id:number;full_name:string;archived_at:string|null}>()
+  if(!person)return c.json({error:'Staff member not found.'},404)
+  if(person.archived_at)return c.json({error:'Staff member is already archived.'},409)
+  await c.env.DB.batch([
+    c.env.DB.prepare("UPDATE staff SET active=0,cadre_id=NULL,archived_at=CURRENT_TIMESTAMP,archived_by=? WHERE id=? AND archived_at IS NULL").bind(identity.email,id),
+    c.env.DB.prepare('DELETE FROM hcot_staff_competencies WHERE staff_id=?').bind(id),
+    c.env.DB.prepare('DELETE FROM hcot_line_manager_assignments WHERE staff_id=?').bind(id),
+    c.env.DB.prepare('INSERT INTO activity(event,detail,actor) VALUES(?,?,?)').bind('staff.archived',JSON.stringify({staff_id:id,name:person.full_name,history_preserved:true}),identity.email)
+  ])
+  return c.json({ok:true,archived:true,history_preserved:true})
+})
+api.get('/staff/archived',async c=>{
+  const identity=await verifyAccessJwt(c.req.raw,c.env)
+  if(!identity||!(await isHcotCompetencyAdmin(c,identity.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const rows=await c.env.DB.prepare('SELECT id,full_name,email,team AS division,role AS department,unit,archived_at,archived_by FROM staff WHERE archived_at IS NOT NULL ORDER BY archived_at DESC').all()
+  return c.json({staff:rows.results||[]})
+})
+api.post('/staff/:id/restore',async c=>{
+  const id=Number(c.req.param('id'))
+  if(!Number.isSafeInteger(id)||id<=0)return c.json({error:'Invalid staff ID.'},400)
+  const identity=await verifyAccessJwt(c.req.raw,c.env)
+  if(!identity||!(await isHcotCompetencyAdmin(c,identity.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const person=await c.env.DB.prepare('SELECT id,full_name,archived_at FROM staff WHERE id=?').bind(id).first<{id:number;full_name:string;archived_at:string|null}>()
+  if(!person||!person.archived_at)return c.json({error:'Archived staff member not found.'},404)
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE staff SET active=1,archived_at=NULL,archived_by=NULL WHERE id=?').bind(id),
+    c.env.DB.prepare('INSERT INTO activity(event,detail,actor) VALUES(?,?,?)').bind('staff.restored',JSON.stringify({staff_id:id,name:person.full_name}),identity.email)
+  ])
+  return c.json({ok:true,restored:true})
 })
 
 api.post('/staff/import', async (c) => {
