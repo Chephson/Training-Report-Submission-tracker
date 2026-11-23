@@ -1045,6 +1045,37 @@ async function renderHCOTSection(section) {
         (mappings.length?'':'<tr><td colspan="3">No staff competencies mapped.</td></tr>')+'</tbody></table></div></div>'
 
       if(isAdmin){
+        const resetPanel=document.createElement('div')
+        resetPanel.className='card mt-16'
+        resetPanel.innerHTML='<div class="card-head"><h3>Administrator — Reset active staff mappings</h3></div><div class="card-body"><p class="tiny muted">Preview-only operation. Removes current cadre, direct competency, cadre-to-group, competency target and line manager assignments. Staff, competency definitions, completed assessments and training history remain. Create and verify a Preview D1 backup before proceeding.</p><button class="btn" id="hcot-reset-preflight">Review affected mappings</button><div id="hcot-reset-summary" class="mt-16 tiny"></div><label class="field"><span>Type RESET ACTIVE STAFF MAPPINGS to confirm</span><input id="hcot-reset-confirm" autocomplete="off"></label><button class="btn" id="hcot-reset-execute" disabled>Reset active mappings</button></div>'
+        el.appendChild(resetPanel)
+        const previewBtn=resetPanel.querySelector('#hcot-reset-preflight')
+        const executeBtn=resetPanel.querySelector('#hcot-reset-execute')
+        const summary=resetPanel.querySelector('#hcot-reset-summary')
+        const phrase=resetPanel.querySelector('#hcot-reset-confirm')
+        let reviewed=false
+        phrase.oninput=()=>{executeBtn.disabled=!reviewed||phrase.value!=='RESET ACTIVE STAFF MAPPINGS'}
+        previewBtn.onclick=async()=>{
+          reviewed=false;executeBtn.disabled=true
+          try{
+            const data=await api('/hcot/admin/staff-mapping-reset/preview')
+            summary.textContent=Object.entries(data.counts||{}).map(([k,v])=>k.replace(/_/g,' ')+': '+v).join(' | ')
+            reviewed=true;executeBtn.disabled=phrase.value!=='RESET ACTIVE STAFF MAPPINGS'
+          }catch(e){summary.textContent='Reset unavailable: '+e.message;toast(e.message,true)}
+        }
+        executeBtn.onclick=async()=>{
+          if(!reviewed||phrase.value!=='RESET ACTIVE STAFF MAPPINGS')return
+          if(!confirm('Permanently clear ALL active staff mappings in Preview? This cannot be undone without restoring a backup.'))return
+          executeBtn.disabled=true
+          try{
+            const result=await api('/hcot/admin/staff-mapping-reset',{method:'POST',body:JSON.stringify({confirm:phrase.value})})
+            toast('Active mappings cleared; historical assessments retained')
+            summary.textContent='Reset completed. Changed rows by operation: '+(result.changed||[]).join(', ')
+            phrase.value='';reviewed=false
+          }catch(e){toast(e.message,true);summary.textContent='Reset failed: '+e.message}
+        }
+      }
+      if(isAdmin){
         const [policy,levelPolicy]=await Promise.all([api('/hcot/mapping-targets'),api('/hcot/competency-level-target-policy')])
         const levels=['Basic','Intermediate','Advanced','Expert']
         const levelOptions=levels.map(x=>'<option value="'+x+'">'+x+' ('+levelPolicy.scores[x]+')</option>').join('')
