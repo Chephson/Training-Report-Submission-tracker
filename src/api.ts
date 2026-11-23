@@ -1267,6 +1267,31 @@ api.patch('/hcot/cadres/:id', async c => {
   await log(c.env.DB,'hcot.cadre.renamed',JSON.stringify({id,previous_name:existing.name,new_name:name}),session.email)
   return c.json({ok:true,id,name})
 })
+// Explicit administrator-only reset of current competency/cadre mappings; historical assessments remain intact.
+api.post('/hcot/mappings/reset', async c => {
+  const session=await verifyAccessJwt(c.req.raw,c.env)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const body=await c.req.json<{confirmation?:string}>().catch(()=>({}))
+  if(body.confirmation!=='RESET CURRENT MAPPINGS')return c.json({error:'Explicit reset confirmation required.'},400)
+  const counts=await c.env.DB.prepare(`SELECT
+    (SELECT COUNT(*) FROM staff WHERE cadre_id IS NOT NULL) AS staff_cadres,
+    (SELECT COUNT(*) FROM hcot_staff_competencies) AS staff_competencies,
+    (SELECT COUNT(*) FROM hcot_cadre_competencies) AS cadre_competencies,
+    (SELECT COUNT(*) FROM hcot_cadre_groups) AS cadre_groups,
+    (SELECT COUNT(*) FROM hcot_cadre_group_scopes) AS cadre_scopes,
+    (SELECT COUNT(*) FROM hcot_mapping_competency_targets) AS mapping_targets`).first()
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM hcot_mapping_competency_targets'),
+    c.env.DB.prepare('DELETE FROM hcot_cadre_group_scopes'),
+    c.env.DB.prepare('DELETE FROM hcot_cadre_groups'),
+    c.env.DB.prepare('DELETE FROM hcot_cadre_competencies'),
+    c.env.DB.prepare('DELETE FROM hcot_staff_competencies'),
+    c.env.DB.prepare('UPDATE staff SET cadre_id=NULL WHERE cadre_id IS NOT NULL')
+  ])
+  await log(c.env.DB,'hcot.mappings.reset',JSON.stringify({counts,history_preserved:true}),session.email)
+  return c.json({ok:true,counts,history_preserved:true})
+})
+
 api.delete('/hcot/cadres/:id', async c => {
   const session=await verifyAccessJwt(c.req.raw,c.env)
   if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
