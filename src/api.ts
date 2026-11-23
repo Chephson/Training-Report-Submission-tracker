@@ -1299,7 +1299,7 @@ const mappingResetEnabled = (c: {env: Env; req: {url: string}}) => {
   const hostname=new URL(c.req.url).hostname
   return c.env.HCOT_ENABLE_MAPPING_RESET === 'true' &&
     c.env.HCOT_MAPPING_RESET_BACKUP_VERIFIED === 'true' &&
-    /^[a-z0-9-]+\\.training-report-submission-tracker\\.pages\\.dev$/.test(hostname) &&
+    /^[a-z0-9-]+\.training-report-submission-tracker\.pages\.dev$/.test(hostname) &&
     hostname !== 'training-report-submission-tracker.pages.dev'
 }
 
