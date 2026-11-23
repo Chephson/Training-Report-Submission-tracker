@@ -34,7 +34,7 @@ import { previewHandshake } from './lib/hcot-handshake'
 import { verifyAccessJwt } from './lib/hcot-access'
 import { isHcotViewerRead } from './lib/hcot-roles'
 
-export type Env = { DB: D1Database; HCOT_ACCESS_TEAM_DOMAIN?: string; HCOT_ACCESS_AUD?: string; HCOT_SETTINGS_ADMIN_EMAILS?: string; HCOT_ENABLE_MAPPING_RESET?: string }
+export type Env = { DB: D1Database; HCOT_ACCESS_TEAM_DOMAIN?: string; HCOT_ACCESS_AUD?: string; HCOT_SETTINGS_ADMIN_EMAILS?: string; HCOT_ENABLE_MAPPING_RESET?: string; HCOT_MAPPING_RESET_BACKUP_VERIFIED?: string }
 const api = new Hono<{ Bindings: Env }>()
 
 api.use('/*', cors({ origin: (origin, c) => { try { return new URL(origin).origin === new URL(c.req.url).origin ? origin : '' } catch { return '' } }, allowHeaders: ['Content-Type', 'X-Access-Code'] }))
@@ -1295,9 +1295,13 @@ api.delete('/hcot/cadres/:id', async c => {
 })
 /* Preview-only reset of staff-specific current assignments. Cadre/group policy definitions,
    target policies, completed assessments, requests, goals and training history remain intact. */
-const mappingResetEnabled = (c: {env: Env; req: {url: string}}) =>
-  c.env.HCOT_ENABLE_MAPPING_RESET === 'true' &&
-  new URL(c.req.url).hostname !== 'training-report-submission-tracker.pages.dev'
+const mappingResetEnabled = (c: {env: Env; req: {url: string}}) => {
+  const hostname=new URL(c.req.url).hostname
+  return c.env.HCOT_ENABLE_MAPPING_RESET === 'true' &&
+    c.env.HCOT_MAPPING_RESET_BACKUP_VERIFIED === 'true' &&
+    /^[a-z0-9-]+\\.training-report-submission-tracker\\.pages\\.dev$/.test(hostname) &&
+    hostname !== 'training-report-submission-tracker.pages.dev'
+}
 
 api.get('/hcot/admin/staff-mapping-reset/preview', async c => {
   if(!mappingResetEnabled(c))return c.json({error:'Mapping reset is disabled in this environment.'},403)
