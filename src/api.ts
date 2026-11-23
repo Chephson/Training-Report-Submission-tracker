@@ -724,8 +724,8 @@ api.delete('/programmes/:id',async c=>{
   if(!Number.isSafeInteger(id)||id<=0)return c.json({error:'Invalid programme ID.'},400)
   const programme=await c.env.DB.prepare('SELECT id,name FROM programmes WHERE id=?').bind(id).first<{id:number;name:string}>()
   if(!programme)return c.json({error:'Programme not found.'},404)
-  const linked=await c.env.DB.prepare("SELECT id FROM hcot_training_plans WHERE status='approved' AND LOWER(TRIM(title))=LOWER(TRIM(?)) LIMIT 1").bind(programme.name).first()
-  if(linked)return c.json({error:'Cannot delete a programme linked to an approved HCOT training plan.'},409)
+  // Catalogue deletion must not erase approved HCOT plans, reviews, costing or completed submissions.
+  // Plans retain their title and approval status as historical records.
   const assigned=await c.env.DB.prepare('SELECT COUNT(*) AS total FROM programme_assignments WHERE programme_id=?').bind(id).first<{total:number}>()
   await c.env.DB.batch([
     c.env.DB.prepare('DELETE FROM programme_assignments WHERE programme_id=?').bind(id),
@@ -1278,12 +1278,20 @@ api.delete('/hcot/cadres/:id', async c => {
     (SELECT COUNT(*) FROM staff WHERE cadre_id=?) AS staff_count,
     (SELECT COUNT(*) FROM hcot_cadre_competencies WHERE cadre_id=?) AS competency_count,
     (SELECT COUNT(*) FROM hcot_cadre_groups WHERE cadre_id=?) AS group_count,
-    (SELECT COUNT(*) FROM hcot_cadre_group_scopes WHERE cadre_id=?) AS scope_count`).bind(id,id,id,id).first<{staff_count:number;competency_count:number;group_count:number;scope_count:number}>()
-  if(usage && Object.values(usage).some(n=>Number(n)>0))return c.json({error:'Cadre is in use. Reassign staff and remove its competency/group mappings before deletion.',usage},409)
-  const removed=await c.env.DB.prepare('DELETE FROM hcot_cadres WHERE id=? AND NOT EXISTS(SELECT 1 FROM staff WHERE cadre_id=?) AND NOT EXISTS(SELECT 1 FROM hcot_cadre_competencies WHERE cadre_id=?) AND NOT EXISTS(SELECT 1 FROM hcot_cadre_groups WHERE cadre_id=?) AND NOT EXISTS(SELECT 1 FROM hcot_cadre_group_scopes WHERE cadre_id=?)').bind(id,id,id,id,id).run()
-  if(!removed.meta.changes)return c.json({error:'Cadre became referenced and cannot be deleted.'},409)
-  await log(c.env.DB,'hcot.cadre.deleted',JSON.stringify({id,name:existing.name}),session.email)
-  return c.json({ok:true})
+    (SELECT COUNT(*) FROM hcot_cadre_group_scopes WHERE cadre_id=?) AS scope_count,
+    (SELECT COUNT(*) FROM hcot_mapping_competency_targets WHERE cadre_id=?) AS target_count`).bind(id,id,id,id,id).first<{staff_count:number;competency_count:number;group_count:number;scope_count:number;target_count:number}>()
+  // D1 batch is atomic: a failed dependency check rolls back all changes.
+  // Historical competency assessments are linked to staff/competencies, not cadres.
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE staff SET cadre_id=NULL WHERE cadre_id=?').bind(id),
+    c.env.DB.prepare('DELETE FROM hcot_mapping_competency_targets WHERE cadre_id=?').bind(id),
+    c.env.DB.prepare('DELETE FROM hcot_cadre_group_scopes WHERE cadre_id=?').bind(id),
+    c.env.DB.prepare('DELETE FROM hcot_cadre_groups WHERE cadre_id=?').bind(id),
+    c.env.DB.prepare('DELETE FROM hcot_cadre_competencies WHERE cadre_id=?').bind(id),
+    c.env.DB.prepare('DELETE FROM hcot_cadres WHERE id=?').bind(id)
+  ])
+  await log(c.env.DB,'hcot.cadre.deleted',JSON.stringify({id,name:existing.name,removed_mappings:usage,history_preserved:true}),session.email)
+  return c.json({ok:true,unassigned_staff:usage?.staff_count||0,removed_mappings:usage,history_preserved:true})
 })
 api.patch('/hcot/staff/:id/cadre', async c => {
   const session=await verifyAccessJwt(c.req.raw,c.env)
