@@ -1293,41 +1293,42 @@ api.delete('/hcot/cadres/:id', async c => {
   await log(c.env.DB,'hcot.cadre.deleted',JSON.stringify({id,name:existing.name,removed_mappings:usage,history_preserved:true}),session.email)
   return c.json({ok:true,unassigned_staff:usage?.staff_count||0,removed_mappings:usage,history_preserved:true})
 })
-/* Preview-only active assignment reset. No historical assessment or training rows are deleted.
-   Deliberately disabled until an operator enables this on the Preview environment only. */
+/* Preview-only reset of staff-specific current assignments. Cadre/group policy definitions,
+   target policies, completed assessments, requests, goals and training history remain intact. */
+const mappingResetEnabled = (c: {env: Env; req: {url: string}}) =>
+  c.env.HCOT_ENABLE_MAPPING_RESET === 'true' &&
+  new URL(c.req.url).hostname !== 'training-report-submission-tracker.pages.dev'
+
 api.get('/hcot/admin/staff-mapping-reset/preview', async c => {
-  if(c.env.HCOT_ENABLE_MAPPING_RESET !== 'true')return c.json({error:'Mapping reset is disabled in this environment.'},403)
+  if(!mappingResetEnabled(c))return c.json({error:'Mapping reset is disabled in this environment.'},403)
   const identity=await verifyAccessJwt(c.req.raw,c.env)
   if(!identity||!(await isHcotCompetencyAdmin(c,identity.email)))return c.json({error:'HCOT administrator access required.'},403)
   const counts=await c.env.DB.prepare(`SELECT
     (SELECT COUNT(*) FROM staff WHERE cadre_id IS NOT NULL) AS staff_cadres,
     (SELECT COUNT(*) FROM hcot_staff_competencies) AS direct_competencies,
-    (SELECT COUNT(*) FROM hcot_cadre_competencies) AS cadre_competencies,
-    (SELECT COUNT(*) FROM hcot_cadre_groups) AS cadre_groups,
-    (SELECT COUNT(*) FROM hcot_cadre_group_scopes) AS cadre_group_scopes,
-    (SELECT COUNT(*) FROM hcot_mapping_competency_targets) AS competency_targets,
     (SELECT COUNT(*) FROM hcot_line_manager_assignments) AS line_manager_assignments,
-    (SELECT COUNT(*) FROM hcot_competency_assessments) AS historical_assessments`).first()
+    (SELECT COUNT(*) FROM hcot_competency_assessments) AS historical_assessments_preserved,
+    (SELECT COUNT(*) FROM hcot_cadre_groups) AS cadre_group_rules_preserved,
+    (SELECT COUNT(*) FROM hcot_mapping_competency_targets) AS target_policies_preserved`).first()
   return c.json({ok:true,counts,confirmation:'RESET ACTIVE STAFF MAPPINGS',historical_assessments_preserved:true})
 })
 api.post('/hcot/admin/staff-mapping-reset', async c => {
-  if(c.env.HCOT_ENABLE_MAPPING_RESET !== 'true')return c.json({error:'Mapping reset is disabled in this environment.'},403)
+  if(!mappingResetEnabled(c))return c.json({error:'Mapping reset is disabled in this environment.'},403)
   const identity=await verifyAccessJwt(c.req.raw,c.env)
   if(!identity||!(await isHcotCompetencyAdmin(c,identity.email)))return c.json({error:'HCOT administrator access required.'},403)
   const body=await c.req.json<{confirm?:string}>().catch(()=>({}))
   if(body.confirm!=='RESET ACTIVE STAFF MAPPINGS')return c.json({error:'Exact confirmation phrase required.'},400)
-  // D1 batch runs as one transaction; historical assessments, requests, staff, groups and cadres stay intact.
+  // Include audit in the same D1 transaction, so failure cannot leave an unaudited reset.
   const results=await c.env.DB.batch([
     c.env.DB.prepare('UPDATE staff SET cadre_id=NULL WHERE cadre_id IS NOT NULL'),
     c.env.DB.prepare('DELETE FROM hcot_staff_competencies'),
-    c.env.DB.prepare('DELETE FROM hcot_cadre_competencies'),
-    c.env.DB.prepare('DELETE FROM hcot_cadre_groups'),
-    c.env.DB.prepare('DELETE FROM hcot_cadre_group_scopes'),
-    c.env.DB.prepare('DELETE FROM hcot_mapping_competency_targets'),
-    c.env.DB.prepare('DELETE FROM hcot_line_manager_assignments')
+    c.env.DB.prepare('DELETE FROM hcot_line_manager_assignments'),
+    c.env.DB.prepare('INSERT INTO activity(event,detail,actor) VALUES (?,?,?)').bind(
+      'hcot.staff_mapping_reset',
+      JSON.stringify({scope:'staff_cadres,direct_competencies,line_manager_assignments',history_preserved:true}),
+      identity.email)
   ])
-  const changed=results.map(x=>x.meta?.changes||0)
-  await log(c.env.DB,'hcot.staff_mapping_reset',JSON.stringify({changed,history_preserved:true}),identity.email)
+  const changed=results.slice(0,3).map(x=>x.meta?.changes||0)
   return c.json({ok:true,changed,historical_assessments_preserved:true})
 })
 api.patch('/hcot/staff/:id/cadre', async c => {
