@@ -1793,6 +1793,7 @@ async function renderRoster(el) {
 
   $('#topbar-actions').innerHTML = `
     <button class="btn" id="r-directory">Manage divisions, departments & units</button>
+    <button class="btn" id="r-archived">Archived staff</button>
     <button class="btn" id="r-template">Download bulk-load template</button>
      <button class="btn" id="r-import">${ico('upload', 15)} Import list</button>
     <button class="btn btn-primary" id="r-add">${ico('plus', 15)} Add staff member</button>`
@@ -1809,6 +1810,7 @@ async function renderRoster(el) {
   $('#r-add').addEventListener('click', () => staffModal())
   $('#r-import').addEventListener('click', () => rosterImportModal())
   $('#r-directory').addEventListener('click', () => staffDirectoryModal())
+  $('#r-archived').addEventListener('click', () => archivedStaffModal())
 
   el.innerHTML = `
     <div class="card">
@@ -1864,6 +1866,29 @@ async function renderRoster(el) {
       navigate('roster', true)
     })
   )
+}
+
+async function archivedStaffModal() {
+  const m=modal({title:'Archived staff profiles',wide:true,
+    body:'<p class="tiny muted mb-12">Archived staff are excluded from the active roster. Historical training and assessment records remain attached to their original staff IDs.</p><div id="archived-staff-content">Loading archived profiles…</div>',
+    footer:'<button class="btn" data-close>Close</button>'})
+  const load=async()=>{
+    const holder=m.$('#archived-staff-content')
+    try{
+      const data=await api('/staff/archived')
+      const people=data.staff||[]
+      holder.innerHTML=people.length?'<div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Archived</th><th>Action</th></tr></thead><tbody>'+
+        people.map(p=>'<tr><td>'+esc(p.full_name)+'</td><td>'+esc(p.email)+'</td><td>'+esc(p.archived_at||'')+'</td><td><button class="btn btn-sm" data-restore="'+p.id+'">Restore</button></td></tr>').join('')+
+        '</tbody></table></div>':'<p class="tiny muted">No archived staff profiles.</p>'
+      holder.querySelectorAll('[data-restore]').forEach(btn=>btn.onclick=async()=>{
+        const person=people.find(p=>String(p.id)===btn.dataset.restore)
+        if(!person||!confirm('Restore '+person.full_name+' to the active roster? Previous assignments will not be restored automatically.'))return
+        try{await api('/staff/'+person.id+'/restore',{method:'POST'});toast('Staff profile restored');await load();navigate('roster',true)}
+        catch(e){toast(e.message,true)}
+      })
+    }catch(e){holder.textContent='Unable to load archived staff: '+e.message;toast(e.message,true)}
+  }
+  await load()
 }
 
 async function staffDirectoryModal() {
