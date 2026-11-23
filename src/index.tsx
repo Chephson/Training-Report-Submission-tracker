@@ -28,7 +28,7 @@ const shell = (title: string) => `<!DOCTYPE html>
       <div class="gate-icon" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
       </div>
-      <h1>Training Report Tracker</h1>
+      <h1>HCD_HCOT Solution</h1>
       <p>This tracker is protected. Enter your team access code to continue.</p>
       <label for="gate-code">Access code</label>
       <input id="gate-code" type="password" autocomplete="current-password" required />
@@ -44,7 +44,7 @@ const shell = (title: string) => `<!DOCTYPE html>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H16l4 4v11.5A1.5 1.5 0 0 1 18.5 21h-13A1.5 1.5 0 0 1 4 19.5z"/><path d="M8 12h8M8 16h5"/></svg>
         </span>
         <div>
-          <strong>Report Tracker</strong>
+          <strong>HCD_HCOT Solution</strong>
           <small id="brand-org">Training submissions</small>
         </div>
       </div>
@@ -54,12 +54,9 @@ const shell = (title: string) => `<!DOCTYPE html>
         <a href="#/tracker" data-view="tracker"><i data-i="tracker"></i>Submission tracker</a>
         <a href="#/programmes" data-view="programmes"><i data-i="tracker"></i>Programme assignments</a>
         <a href="#/outstanding" data-view="outstanding"><i data-i="tracker"></i>Outstanding reports</a>
-        <a href="#/hcot" data-view="hcot"><i data-i="dashboard"></i>HCOT Training Monitor</a>
+        <a href="#/hcot" data-view="hcot"><i data-i="dashboard"></i>Admin Controls</a>
         <a href="#/history" data-view="history"><i data-i="roster"></i>Staff training history</a>
         <a href="#/inbox" data-view="inbox"><i data-i="inbox"></i>Unmatched<span class="pill" id="nav-inbox-count" hidden>0</span></a>
-        <a href="#/roster" data-view="roster"><i data-i="roster"></i>Staff roster</a>
-        <a href="#/setup" data-view="setup"><i data-i="setup"></i>Forms connection</a>
-        <a href="#/settings" data-view="settings"><i data-i="settings"></i>Settings</a>
       </nav>
 
       <div class="sidebar-foot">
@@ -67,7 +64,7 @@ const shell = (title: string) => `<!DOCTYPE html>
           <label for="period-picker">Reporting period</label>
           <select id="period-picker"></select>
         </div>
-        <a class="foot-link" href="#/setup">+ New period</a>
+        
       </div>
     </aside>
 
@@ -88,7 +85,7 @@ const shell = (title: string) => `<!DOCTYPE html>
 </body>
 </html>`
 
-app.get('/', (c) => c.html(shell('Training Report Tracker')))
+app.get('/', (c) => c.html(shell('HCD_HCOT Solution')))
 
 // Anything that is not an API route renders the app shell (hash routing).
 app.get('*', async (c) => {
@@ -99,7 +96,7 @@ app.get('*', async (c) => {
     const res = await assets.fetch(c.req.raw)
     if (res.status !== 404) return res
   }
-  return c.html(shell('Training Report Tracker'))
+  return c.html(shell('HCD_HCOT Solution'))
 })
 
 export default app
