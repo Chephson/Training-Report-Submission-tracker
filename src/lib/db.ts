@@ -228,6 +228,9 @@ export function ensureSchema(db: D1Database): Promise<void> {
     }
     const cadreCols=await db.prepare('PRAGMA table_info(staff)').all<{name:string}>()
     if(!(cadreCols.results??[]).some(c=>c.name==='cadre_id')) await db.prepare('ALTER TABLE staff ADD COLUMN cadre_id INTEGER REFERENCES hcot_cadres(id)').run()
+    const archiveCols=await db.prepare('PRAGMA table_info(staff)').all<{name:string}>()
+    if(!(archiveCols.results??[]).some(c=>c.name==='archived_at'))await db.prepare('ALTER TABLE staff ADD COLUMN archived_at TEXT').run()
+    if(!(archiveCols.results??[]).some(c=>c.name==='archived_by'))await db.prepare('ALTER TABLE staff ADD COLUMN archived_by TEXT').run()
     const competencyCols=await db.prepare('PRAGMA table_info(hcot_competencies)').all<{name:string}>()
     if(!(competencyCols.results??[]).some(c=>c.name==='department')) await db.prepare('ALTER TABLE hcot_competencies ADD COLUMN department TEXT').run()
     // Upgrade existing installations without losing historical submissions.
