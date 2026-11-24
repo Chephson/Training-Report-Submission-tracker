@@ -30,10 +30,10 @@ test('competency group edit/delete keeps library competencies intact',()=>{
  assert.match(ui,/hcg-save-group/)
  assert.match(ui,/hcg-delete-group/)
 })
-test('programme deletion preserves reports and blocks approved plans',()=>{
+test('programme deletion preserves reports and allows approved plan history to remain',()=>{
  const route=api.slice(api.indexOf("api.delete('/programmes/:id'"),api.indexOf("api.post('/programme-assignments/import'"))
  assert.match(route,/isHcotCompetencyAdmin/)
- assert.match(route,/status='approved'/)
+ assert.match(route,/approved HCOT plans/)
  assert.match(route,/DELETE FROM programme_assignments/)
  assert.match(route,/DELETE FROM programmes/)
  assert.doesNotMatch(route,/DELETE FROM submissions/)
