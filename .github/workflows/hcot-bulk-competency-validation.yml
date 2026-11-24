@@ -23,4 +23,4 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - run: node --test tests/*.test.mjs
+      - run: node --experimental-strip-types --experimental-loader ./tests/extensionless-ts-loader.mjs --test tests/*.test.mjs
