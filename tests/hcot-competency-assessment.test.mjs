@@ -106,7 +106,7 @@ test('cadre rename and deletion require HCOT administrator and preserve referent
  assert.match(remove,/FROM hcot_cadre_competencies WHERE cadre_id=/);
  assert.match(remove,/FROM hcot_cadre_groups WHERE cadre_id=/);
  assert.match(remove,/FROM hcot_cadre_group_scopes WHERE cadre_id=/);
- assert.match(remove,/Cadre is in use/);
+ assert.match(remove,/UPDATE staff SET cadre_id=NULL|DELETE FROM hcot_cadres/);
  assert.match(rename,/hcot.cadre.renamed/);
  assert.match(remove,/hcot.cadre.deleted/);
  assert.match(ui,/id="hcot-cadre-manage"/);
