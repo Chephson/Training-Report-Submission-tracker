@@ -1084,6 +1084,45 @@ api.patch('/hcot/competency-groups/:id',async c=>{
   await log(c.env.DB,'hcot.group.updated','Competency group #'+id,actor.email)
   return c.json({ok:true})
 })
+api.post('/hcot/competencies/bulk-delete',async c=>{
+  const actor=await verifyAccessJwt(c.req.raw,c.env)
+  if(!actor||!(await isHcotCompetencyAdmin(c,actor.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const body=await c.req.json<{group_ids?:number[];competency_ids?:number[];confirm?:string;commit?:boolean}>().catch(()=>({}))
+  const valid=(v:unknown):v is number[]=>Array.isArray(v)&&v.length<=500&&v.every(x=>Number.isSafeInteger(x)&&x>0)
+  if(!valid(body.group_ids)||!valid(body.competency_ids))return c.json({error:'Provide valid group_ids and competency_ids arrays (maximum 500 each).'},400)
+  const groupIds=[...new Set(body.group_ids)],explicitIds=[...new Set(body.competency_ids)]
+  if(!groupIds.length&&!explicitIds.length)return c.json({error:'Select at least one group or competency.'},400)
+  const groups=await c.env.DB.prepare('SELECT id,name FROM hcot_competency_groups').all<{id:number;name:string}>()
+  const active=await c.env.DB.prepare('SELECT id,name FROM hcot_competencies WHERE archived_at IS NULL').all<{id:number;name:string}>()
+  if(groupIds.some(id=>!(groups.results||[]).some(g=>g.id===id))||explicitIds.some(id=>!(active.results||[]).some(x=>x.id===id)))return c.json({error:'One or more selections no longer exist.'},409)
+  const links=await c.env.DB.prepare('SELECT group_id,competency_id FROM hcot_group_competencies').all<{group_id:number;competency_id:number}>()
+  const groupSet=new Set(groupIds),archiveIds=new Set(explicitIds)
+  const linkedToDeleted=new Set((links.results||[]).filter(x=>groupSet.has(x.group_id)).map(x=>x.competency_id))
+  for(const id of linkedToDeleted){
+    if(!(links.results||[]).some(x=>x.competency_id===id&&!groupSet.has(x.group_id)))archiveIds.add(id)
+  }
+  const archived=[...archiveIds].filter(id=>(active.results||[]).some(x=>x.id===id))
+  const preserved=[...linkedToDeleted].filter(id=>!archiveIds.has(id))
+  const impact={groups:groupIds.length,competencies_to_archive:archived.length,shared_competencies_preserved:preserved.length,archived_names:archived.map(id=>(active.results||[]).find(x=>x.id===id)?.name),history_preserved:true}
+  if(!body.commit)return c.json({ok:true,impact})
+  if(body.confirm!=='DELETE SELECTED COMPETENCIES')return c.json({error:'Exact confirmation required.'},400)
+  const statements=[]
+  for(const id of groupIds){
+    statements.push(c.env.DB.prepare('DELETE FROM hcot_group_competencies WHERE group_id=?').bind(id))
+    statements.push(c.env.DB.prepare('DELETE FROM hcot_cadre_groups WHERE group_id=?').bind(id))
+    statements.push(c.env.DB.prepare('DELETE FROM hcot_cadre_group_scopes WHERE group_id=?').bind(id))
+    statements.push(c.env.DB.prepare('DELETE FROM hcot_competency_groups WHERE id=?').bind(id))
+  }
+  for(const id of archived){
+    statements.push(c.env.DB.prepare('UPDATE hcot_competencies SET archived_at=CURRENT_TIMESTAMP,archived_by=? WHERE id=? AND archived_at IS NULL').bind(actor.email,id))
+    statements.push(c.env.DB.prepare('DELETE FROM hcot_staff_competencies WHERE competency_id=?').bind(id))
+    statements.push(c.env.DB.prepare('DELETE FROM hcot_cadre_competencies WHERE competency_id=?').bind(id))
+    statements.push(c.env.DB.prepare('DELETE FROM hcot_group_competencies WHERE competency_id=?').bind(id))
+  }
+  statements.push(c.env.DB.prepare('INSERT INTO activity(event,detail,actor) VALUES(?,?,?)').bind('hcot.competencies.bulk_archived',JSON.stringify({group_ids:groupIds,competency_ids:archived,shared_preserved:preserved}),actor.email))
+  await c.env.DB.batch(statements)
+  return c.json({ok:true,impact})
+})
 api.delete('/hcot/competency-groups/:id',async c=>{
   const actor=await verifyAccessJwt(c.req.raw,c.env)
   if(!actor||!(await isHcotCompetencyAdmin(c,actor.email)))return c.json({error:'HCOT administrator access required.'},403)
