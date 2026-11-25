@@ -1,0 +1,26 @@
+name: HCOT bulk competency build validation
+on:
+  push:
+    branches:
+      - feature/hcot-preview-safe-mapping-reset
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'package*.json'
+      - 'tests/**'
+      - '.github/workflows/hcot-bulk-competency-validation.yml'
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: node --experimental-strip-types --experimental-loader ./tests/extensionless-ts-loader.mjs --test tests/*.test.mjs

@@ -34,7 +34,7 @@ import { previewHandshake } from './lib/hcot-handshake'
 import { verifyAccessJwt } from './lib/hcot-access'
 import { isHcotViewerRead } from './lib/hcot-roles'
 
-export type Env = { DB: D1Database; HCOT_ACCESS_TEAM_DOMAIN?: string; HCOT_ACCESS_AUD?: string; HCOT_SETTINGS_ADMIN_EMAILS?: string }
+export type Env = { DB: D1Database; HCOT_ACCESS_TEAM_DOMAIN?: string; HCOT_ACCESS_AUD?: string; HCOT_SETTINGS_ADMIN_EMAILS?: string; HCOT_ENABLE_MAPPING_RESET?: string; HCOT_MAPPING_RESET_BACKUP_VERIFIED?: string }
 const api = new Hono<{ Bindings: Env }>()
 
 api.use('/*', cors({ origin: (origin, c) => { try { return new URL(origin).origin === new URL(c.req.url).origin ? origin : '' } catch { return '' } }, allowHeaders: ['Content-Type', 'X-Access-Code'] }))
@@ -430,6 +430,15 @@ async function validateStaffDirectory(db:D1Database, division:string|null, depar
   return null
 }
 
+/* Import-only diagnostics. Never modify the organisational directory to make a CSV pass. */
+async function explainCompetencyImportScope(db:D1Database,division:string|null,department:string|null,unit:string|null,error:string){
+  const entered='Division "'+(division||'(blank)')+'", Department "'+(department||'(blank)')+'", Unit "'+(unit||'(blank)')+'". '
+  if(!unit||!error.includes('Unit must belong'))return entered+error
+  const matches=await db.prepare(`SELECT division_name AS division,department_name AS department FROM staff_units WHERE LOWER(TRIM(name))=LOWER(TRIM(?)) UNION SELECT team AS division,role AS department FROM staff WHERE LOWER(TRIM(unit))=LOWER(TRIM(?)) AND team IS NOT NULL AND role IS NOT NULL LIMIT 8`).bind(unit,unit).all<{division:string;department:string}>()
+  const locations=(matches.results||[]).map(x=>x.division+' / '+x.department)
+  return entered+error+(locations.length?' Existing directory/roster associations for this Unit: '+locations.join('; ')+'.':' This Unit was not found in the directory or staff roster.')+' Correct the CSV hierarchy or the Organisational Directory; no rows have been imported.'
+}
+
 /* ---------------- staff roster ---------------- */
 /* Preview-only roster reset preflight. Read-only: never deletes data. */
 api.get('/hcot/preview-roster-reset/preflight', async c => {
@@ -476,7 +485,7 @@ api.post('/hcot/preview-roster-reset/execute', async c => {
 })
 api.get('/staff', async (c) => {
   const rows = await c.env.DB.prepare(
-    'SELECT * FROM staff ORDER BY full_name COLLATE NOCASE'
+    'SELECT * FROM staff WHERE archived_at IS NULL ORDER BY full_name COLLATE NOCASE'
   ).all<Staff>()
   return c.json({ staff: rows.results ?? [] })
 })
@@ -521,11 +530,41 @@ api.patch('/staff/:id', async (c) => {
   return c.json({ ok: true })
 })
 
-api.delete('/staff/:id', async (c) => {
-  const id = Number(c.req.param('id'))
-  await c.env.DB.prepare('DELETE FROM submissions WHERE staff_id = ?').bind(id).run()
-  await c.env.DB.prepare('DELETE FROM staff WHERE id = ?').bind(id).run()
-  return c.json({ ok: true })
+/* Roster removal is archival: historical foreign keys and submissions remain intact. */
+api.delete('/staff/:id', async c => {
+  const id=Number(c.req.param('id'))
+  if(!Number.isSafeInteger(id)||id<=0)return c.json({error:'Invalid staff ID.'},400)
+  const identity=await verifyAccessJwt(c.req.raw,c.env)
+  if(!identity||!(await isHcotCompetencyAdmin(c,identity.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const person=await c.env.DB.prepare('SELECT id,full_name,archived_at FROM staff WHERE id=?').bind(id).first<{id:number;full_name:string;archived_at:string|null}>()
+  if(!person)return c.json({error:'Staff member not found.'},404)
+  if(person.archived_at)return c.json({error:'Staff member is already archived.'},409)
+  await c.env.DB.batch([
+    c.env.DB.prepare("UPDATE staff SET active=0,cadre_id=NULL,archived_at=CURRENT_TIMESTAMP,archived_by=? WHERE id=? AND archived_at IS NULL").bind(identity.email,id),
+    c.env.DB.prepare('DELETE FROM hcot_staff_competencies WHERE staff_id=?').bind(id),
+    c.env.DB.prepare('DELETE FROM hcot_line_manager_assignments WHERE staff_id=?').bind(id),
+    c.env.DB.prepare('INSERT INTO activity(event,detail,actor) VALUES(?,?,?)').bind('staff.archived',JSON.stringify({staff_id:id,name:person.full_name,history_preserved:true}),identity.email)
+  ])
+  return c.json({ok:true,archived:true,history_preserved:true})
+})
+api.get('/staff/archived',async c=>{
+  const identity=await verifyAccessJwt(c.req.raw,c.env)
+  if(!identity||!(await isHcotCompetencyAdmin(c,identity.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const rows=await c.env.DB.prepare('SELECT id,full_name,email,team AS division,role AS department,unit,archived_at,archived_by FROM staff WHERE archived_at IS NOT NULL ORDER BY archived_at DESC').all()
+  return c.json({staff:rows.results||[]})
+})
+api.post('/staff/:id/restore',async c=>{
+  const id=Number(c.req.param('id'))
+  if(!Number.isSafeInteger(id)||id<=0)return c.json({error:'Invalid staff ID.'},400)
+  const identity=await verifyAccessJwt(c.req.raw,c.env)
+  if(!identity||!(await isHcotCompetencyAdmin(c,identity.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const person=await c.env.DB.prepare('SELECT id,full_name,archived_at FROM staff WHERE id=?').bind(id).first<{id:number;full_name:string;archived_at:string|null}>()
+  if(!person||!person.archived_at)return c.json({error:'Archived staff member not found.'},404)
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE staff SET active=1,archived_at=NULL,archived_by=NULL WHERE id=?').bind(id),
+    c.env.DB.prepare('INSERT INTO activity(event,detail,actor) VALUES(?,?,?)').bind('staff.restored',JSON.stringify({staff_id:id,name:person.full_name}),identity.email)
+  ])
+  return c.json({ok:true,restored:true})
 })
 
 api.post('/staff/import', async (c) => {
@@ -1054,6 +1093,45 @@ api.patch('/hcot/competency-groups/:id',async c=>{
   await log(c.env.DB,'hcot.group.updated','Competency group #'+id,actor.email)
   return c.json({ok:true})
 })
+api.post('/hcot/competencies/bulk-delete',async c=>{
+  const actor=await verifyAccessJwt(c.req.raw,c.env)
+  if(!actor||!(await isHcotCompetencyAdmin(c,actor.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const body=await c.req.json<{group_ids?:number[];competency_ids?:number[];confirm?:string;commit?:boolean}>().catch(()=>({}))
+  const valid=(v:unknown):v is number[]=>Array.isArray(v)&&v.length<=500&&v.every(x=>Number.isSafeInteger(x)&&x>0)
+  if(!valid(body.group_ids)||!valid(body.competency_ids))return c.json({error:'Provide valid group_ids and competency_ids arrays (maximum 500 each).'},400)
+  const groupIds=[...new Set(body.group_ids)],explicitIds=[...new Set(body.competency_ids)]
+  if(!groupIds.length&&!explicitIds.length)return c.json({error:'Select at least one group or competency.'},400)
+  const groups=await c.env.DB.prepare('SELECT id,name FROM hcot_competency_groups').all<{id:number;name:string}>()
+  const active=await c.env.DB.prepare('SELECT id,name FROM hcot_competencies WHERE archived_at IS NULL').all<{id:number;name:string}>()
+  if(groupIds.some(id=>!(groups.results||[]).some(g=>g.id===id))||explicitIds.some(id=>!(active.results||[]).some(x=>x.id===id)))return c.json({error:'One or more selections no longer exist.'},409)
+  const links=await c.env.DB.prepare('SELECT group_id,competency_id FROM hcot_group_competencies').all<{group_id:number;competency_id:number}>()
+  const groupSet=new Set(groupIds),archiveIds=new Set(explicitIds)
+  const linkedToDeleted=new Set((links.results||[]).filter(x=>groupSet.has(x.group_id)).map(x=>x.competency_id))
+  for(const id of linkedToDeleted){
+    if(!(links.results||[]).some(x=>x.competency_id===id&&!groupSet.has(x.group_id)))archiveIds.add(id)
+  }
+  const archived=[...archiveIds].filter(id=>(active.results||[]).some(x=>x.id===id))
+  const preserved=[...linkedToDeleted].filter(id=>!archiveIds.has(id))
+  const impact={groups:groupIds.length,competencies_to_archive:archived.length,shared_competencies_preserved:preserved.length,archived_names:archived.map(id=>(active.results||[]).find(x=>x.id===id)?.name),history_preserved:true}
+  if(!body.commit)return c.json({ok:true,impact})
+  if(body.confirm!=='DELETE SELECTED COMPETENCIES')return c.json({error:'Exact confirmation required.'},400)
+  const statements=[]
+  for(const id of groupIds){
+    statements.push(c.env.DB.prepare('DELETE FROM hcot_group_competencies WHERE group_id=?').bind(id))
+    statements.push(c.env.DB.prepare('DELETE FROM hcot_cadre_groups WHERE group_id=?').bind(id))
+    statements.push(c.env.DB.prepare('DELETE FROM hcot_cadre_group_scopes WHERE group_id=?').bind(id))
+    statements.push(c.env.DB.prepare('DELETE FROM hcot_competency_groups WHERE id=?').bind(id))
+  }
+  for(const id of archived){
+    statements.push(c.env.DB.prepare('UPDATE hcot_competencies SET archived_at=CURRENT_TIMESTAMP,archived_by=? WHERE id=? AND archived_at IS NULL').bind(actor.email,id))
+    statements.push(c.env.DB.prepare('DELETE FROM hcot_staff_competencies WHERE competency_id=?').bind(id))
+    statements.push(c.env.DB.prepare('DELETE FROM hcot_cadre_competencies WHERE competency_id=?').bind(id))
+    statements.push(c.env.DB.prepare('DELETE FROM hcot_group_competencies WHERE competency_id=?').bind(id))
+  }
+  statements.push(c.env.DB.prepare('INSERT INTO activity(event,detail,actor) VALUES(?,?,?)').bind('hcot.competencies.bulk_archived',JSON.stringify({group_ids:groupIds,competency_ids:archived,shared_preserved:preserved}),actor.email))
+  await c.env.DB.batch(statements)
+  return c.json({ok:true,impact})
+})
 api.delete('/hcot/competency-groups/:id',async c=>{
   const actor=await verifyAccessJwt(c.req.raw,c.env)
   if(!actor||!(await isHcotCompetencyAdmin(c,actor.email)))return c.json({error:'HCOT administrator access required.'},403)
@@ -1069,6 +1147,18 @@ api.delete('/hcot/competency-groups/:id',async c=>{
   ])
   await log(c.env.DB,'hcot.group.deleted','Competency group #'+id+': '+group.name,actor.email)
   return c.json({ok:true})
+})
+api.delete('/hcot/competency-groups/:id/competencies/:competencyId',async c=>{
+  const actor=await verifyAccessJwt(c.req.raw,c.env)
+  if(!actor||!(await isHcotCompetencyAdmin(c,actor.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const groupId=Number(c.req.param('id')),competencyId=Number(c.req.param('competencyId'))
+  if(!Number.isSafeInteger(groupId)||groupId<=0||!Number.isSafeInteger(competencyId)||competencyId<=0)return c.json({error:'Invalid group or competency.'},400)
+  const result=await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM hcot_group_competencies WHERE group_id=? AND competency_id=?').bind(groupId,competencyId),
+    c.env.DB.prepare('INSERT INTO activity(event,detail,actor) VALUES(?,?,?)').bind('hcot.group.competency.unlinked',JSON.stringify({group_id:groupId,competency_id:competencyId}),actor.email)
+  ])
+  if(!result[0].meta.changes)return c.json({error:'Competency is not linked to this group.'},404)
+  return c.json({ok:true,library_preserved:true,historical_assessments_preserved:true})
 })
 api.post('/hcot/competency-groups/import',async c=>{
   const session=await verifyAccessJwt(c.req.raw,c.env)
@@ -1105,7 +1195,7 @@ api.post('/hcot/competency-groups/import',async c=>{
     }
     if((department&&!division)||(unit&&!department)){errors.push('Row '+line+': division is required for department and department for unit.');continue}
     const scopeError=await validateStaffDirectory(c.env.DB,division||null,department||null,unit||null)
-    if(scopeError){errors.push('Row '+line+': '+scopeError);continue}
+    if(scopeError){errors.push('Row '+line+': '+await explainCompetencyImportScope(c.env.DB,division||null,department||null,unit||null,scopeError));continue}
     prepared.push({code,group,groupDescription,competency,category,competencyDescription,cadreId:cadreCache.get(cadreKey)!,division:division||null,department:department||null,unit:unit||null})
   }
   if(errors.length)return c.json({error:'Import rejected; no rows applied.',errors:errors.slice(0,100),error_count:errors.length},400)
@@ -1176,7 +1266,7 @@ api.post('/hcot/competency-groups/assign-cadre', async c => {
   return c.json({ok:true})
 })
 api.get('/hcot/competencies', async c => {
-  const rows=await c.env.DB.prepare('SELECT * FROM hcot_competencies ORDER BY name COLLATE NOCASE').all()
+  const rows=await c.env.DB.prepare('SELECT * FROM hcot_competencies WHERE archived_at IS NULL ORDER BY name COLLATE NOCASE').all()
   return c.json({competencies:rows.results||[]})
 })
 api.post('/hcot/competencies', async c => {
@@ -1224,15 +1314,21 @@ api.patch('/hcot/competencies/:id', async c => {
 })
 api.delete('/hcot/competencies/:id', async c => {
   const session=await verifyAccessJwt(c.req.raw,c.env)
-  if(!session || !(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
+  if(!session||!(await isHcotCompetencyAdmin(c,session.email)))return c.json({error:'HCOT administrator access required.'},403)
   const id=Number(c.req.param('id'))
   if(!Number.isSafeInteger(id)||id<=0)return c.json({error:'Invalid competency ID.'},400)
-  const existing=await c.env.DB.prepare('SELECT id FROM hcot_competencies WHERE id=?').bind(id).first()
-  if(!existing)return c.json({error:'Competency not found.'},404)
-  const mapped=await c.env.DB.prepare('SELECT COUNT(*) AS total FROM hcot_staff_competencies WHERE competency_id=?').bind(id).first<{total:number}>()
-  if(Number(mapped?.total||0)>0)return c.json({error:'This competency is assigned to staff. Remove its staff assignments before deleting it.'},409)
-  await c.env.DB.prepare('DELETE FROM hcot_competencies WHERE id=? AND NOT EXISTS (SELECT 1 FROM hcot_staff_competencies WHERE competency_id=?)').bind(id,id).run()
-  return c.json({ok:true})
+  const existing=await c.env.DB.prepare('SELECT id,name,archived_at FROM hcot_competencies WHERE id=?').bind(id).first<{id:number;name:string;archived_at:string|null}>()
+  if(!existing||existing.archived_at)return c.json({error:'Active competency not found.'},404)
+  // Archive the library entry rather than deleting the row referenced by completed assessments or KPIs.
+  // Clear current direct/cadre/group links only; preserve historical assessments and performance records.
+  const results=await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE hcot_competencies SET archived_at=CURRENT_TIMESTAMP,archived_by=? WHERE id=? AND archived_at IS NULL').bind(session.email,id),
+    c.env.DB.prepare('DELETE FROM hcot_staff_competencies WHERE competency_id=?').bind(id),
+    c.env.DB.prepare('DELETE FROM hcot_cadre_competencies WHERE competency_id=?').bind(id),
+    c.env.DB.prepare('DELETE FROM hcot_group_competencies WHERE competency_id=?').bind(id),
+    c.env.DB.prepare('INSERT INTO activity(event,detail,actor) VALUES(?,?,?)').bind('hcot.competency.archived',JSON.stringify({competency_id:id,name:existing.name,history_preserved:true}),session.email)
+  ])
+  return c.json({ok:true,archived:true,removed_active_links:results.slice(1,4).map(x=>x.meta?.changes||0),history_preserved:true})
 })
 
 /* Staff identities come exclusively from the central Staff Roster. */
@@ -1292,6 +1388,48 @@ api.delete('/hcot/cadres/:id', async c => {
   ])
   await log(c.env.DB,'hcot.cadre.deleted',JSON.stringify({id,name:existing.name,removed_mappings:usage,history_preserved:true}),session.email)
   return c.json({ok:true,unassigned_staff:usage?.staff_count||0,removed_mappings:usage,history_preserved:true})
+})
+/* Preview-only reset of staff-specific current assignments. Cadre/group policy definitions,
+   target policies, completed assessments, requests, goals and training history remain intact. */
+const mappingResetEnabled = (c: {env: Env; req: {url: string}}) => {
+  const hostname=new URL(c.req.url).hostname
+  return c.env.HCOT_ENABLE_MAPPING_RESET === 'true' &&
+    c.env.HCOT_MAPPING_RESET_BACKUP_VERIFIED === 'true' &&
+    /^[a-z0-9-]+\.training-report-submission-tracker\.pages\.dev$/.test(hostname) &&
+    hostname !== 'training-report-submission-tracker.pages.dev'
+}
+
+api.get('/hcot/admin/staff-mapping-reset/preview', async c => {
+  if(!mappingResetEnabled(c))return c.json({error:'Mapping reset is disabled in this environment.'},403)
+  const identity=await verifyAccessJwt(c.req.raw,c.env)
+  if(!identity||!(await isHcotCompetencyAdmin(c,identity.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const counts=await c.env.DB.prepare(`SELECT
+    (SELECT COUNT(*) FROM staff WHERE cadre_id IS NOT NULL) AS staff_cadres,
+    (SELECT COUNT(*) FROM hcot_staff_competencies) AS direct_competencies,
+    (SELECT COUNT(*) FROM hcot_line_manager_assignments) AS line_manager_assignments,
+    (SELECT COUNT(*) FROM hcot_competency_assessments) AS historical_assessments_preserved,
+    (SELECT COUNT(*) FROM hcot_cadre_groups) AS cadre_group_rules_preserved,
+    (SELECT COUNT(*) FROM hcot_mapping_competency_targets) AS target_policies_preserved`).first()
+  return c.json({ok:true,counts,confirmation:'RESET ACTIVE STAFF MAPPINGS',historical_assessments_preserved:true})
+})
+api.post('/hcot/admin/staff-mapping-reset', async c => {
+  if(!mappingResetEnabled(c))return c.json({error:'Mapping reset is disabled in this environment.'},403)
+  const identity=await verifyAccessJwt(c.req.raw,c.env)
+  if(!identity||!(await isHcotCompetencyAdmin(c,identity.email)))return c.json({error:'HCOT administrator access required.'},403)
+  const body=await c.req.json<{confirm?:string}>().catch(()=>({}))
+  if(body.confirm!=='RESET ACTIVE STAFF MAPPINGS')return c.json({error:'Exact confirmation phrase required.'},400)
+  // Include audit in the same D1 transaction, so failure cannot leave an unaudited reset.
+  const results=await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE staff SET cadre_id=NULL WHERE cadre_id IS NOT NULL'),
+    c.env.DB.prepare('DELETE FROM hcot_staff_competencies'),
+    c.env.DB.prepare('DELETE FROM hcot_line_manager_assignments'),
+    c.env.DB.prepare('INSERT INTO activity(event,detail,actor) VALUES (?,?,?)').bind(
+      'hcot.staff_mapping_reset',
+      JSON.stringify({scope:'staff_cadres,direct_competencies,line_manager_assignments',history_preserved:true}),
+      identity.email)
+  ])
+  const changed=results.slice(0,3).map(x=>x.meta?.changes||0)
+  return c.json({ok:true,changed,historical_assessments_preserved:true})
 })
 api.patch('/hcot/staff/:id/cadre', async c => {
   const session=await verifyAccessJwt(c.req.raw,c.env)

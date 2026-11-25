@@ -1030,20 +1030,99 @@ async function renderHCOTSection(section) {
       const sameScope=(scope,value)=>!scope||String(scope).trim().toLowerCase()===String(value||'').trim().toLowerCase()
       const staffGroupLookup=isAdmin?'<div class="card mt-16"><div class="card-head"><h3>Find staff competency groups</h3></div><div class="card-body"><label class="field"><span>Search Staff Roster by name or email</span><input id="hcg-staff-search" placeholder="Type staff name or email"></label><label class="field"><span>Select staff</span><select id="hcg-staff-select"><option value="">Select staff</option></select></label><div id="hcg-staff-groups" class="mt-16 tiny muted">Search for a staff member to view their linked competency groups.</div></div></div>':''
       el.innerHTML='<div class="card"><div class="card-head"><h3>Competency groups and cadre links</h3></div><div class="card-body"><p class="tiny muted">Create groups with unique group codes, assign competencies to one or more groups, then link groups to job cadres. Existing mappings are preserved.</p>'+
-        (isAdmin?'<label class="field"><span>New competency group</span><input id="hcg-name" maxlength="150"></label><label class="field"><span>Unique group code</span><input id="hcg-code" maxlength="80" placeholder="e.g. LEAD-001"></label><button class="btn" id="hcg-create">Create group</button><hr><label class="field"><span>Existing group to edit or delete</span><select id="hcg-manage-group"><option value="">Select group</option>'+groupOptions+'</select></label><label class="field"><span>Group name</span><input id="hcg-manage-name" maxlength="150"></label><label class="field"><span>Description</span><textarea id="hcg-manage-description"></textarea></label><button class="btn" id="hcg-save-group">Save group changes</button> <button class="btn" id="hcg-delete-group">Delete group</button><hr><label class="field"><span>Competency group</span><select id="hcg-comp-group"><option value="">Select group</option>'+groupOptions+'</select></label><label class="field"><span>Individual competency</span><select id="hcg-comp"><option value="">Select competency</option>'+comps.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('')+'</select></label><button class="btn" id="hcg-link-comp">Add competency to group</button><hr><label class="field"><span>Group to link to cadre</span><select id="hcg-cadre-group"><option value="">Select group</option>'+groupOptions+'</select></label><label class="field"><span>Job cadre</span><select id="hcg-cadre"><option value="">Select cadre</option>'+cadres.filter(c=>c.active).map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('')+'</select></label><label class="field"><span>Division (optional)</span><select id="hcg-scope-div">'+options(divisions,'Commission-wide')+'</select></label><label class="field"><span>Department (optional)</span><select id="hcg-scope-dept" disabled><option value="">All departments</option></select></label><label class="field"><span>Unit (optional)</span><select id="hcg-scope-unit" disabled><option value="">All units</option></select></label><button class="btn btn-primary" id="hcg-link-cadre">Link group to cadre and scope</button>':'')+
+        (isAdmin?'<label class="field"><span>New competency group</span><input id="hcg-name" maxlength="150"></label><label class="field"><span>Unique group code</span><input id="hcg-code" maxlength="80" placeholder="e.g. LEAD-001"></label><button class="btn" id="hcg-create">Create group</button><hr><label class="field"><span>Existing group to edit or delete</span><select id="hcg-manage-group"><option value="">Select group</option>'+groupOptions+'</select></label><label class="field"><span>Group name</span><input id="hcg-manage-name" maxlength="150"></label><label class="field"><span>Description</span><textarea id="hcg-manage-description"></textarea></label><button class="btn" id="hcg-save-group">Save group changes</button> <button class="btn" id="hcg-delete-group">Delete group</button><hr><label class="field"><span>Competency group</span><select id="hcg-comp-group"><option value="">Select group</option>'+groupOptions+'</select></label><label class="field"><span>Individual competency</span><select id="hcg-comp"><option value="">Select competency</option>'+comps.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('')+'</select></label><button class="btn" id="hcg-link-comp">Add competency to group</button> <button class="btn btn-ghost" id="hcg-unlink-comp">Remove competency from group</button><hr><label class="field"><span>Group to link to cadre</span><select id="hcg-cadre-group"><option value="">Select group</option>'+groupOptions+'</select></label><label class="field"><span>Job cadre</span><select id="hcg-cadre"><option value="">Select cadre</option>'+cadres.filter(c=>c.active).map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('')+'</select></label><label class="field"><span>Division (optional)</span><select id="hcg-scope-div">'+options(divisions,'Commission-wide')+'</select></label><label class="field"><span>Department (optional)</span><select id="hcg-scope-dept" disabled><option value="">All departments</option></select></label><label class="field"><span>Unit (optional)</span><select id="hcg-scope-unit" disabled><option value="">All units</option></select></label><button class="btn btn-primary" id="hcg-link-cadre">Link group to cadre and scope</button>':'')+
         '<div class="mt-16"><h4>Bulk upload competency groups and cadre mappings</h4><p class="tiny muted">New competencies are created automatically when their names do not exist in the library. Use unique group_code values to distinguish groups with the same name. Existing competency categories must match Core or Functional. Use active cadre names. Organisational scope is inferred from division, department and unit (leave all three blank for Commission-wide). Repeated group codes reuse the existing group; different codes may have identical group names. A competency may belong to multiple groups.</p><button class="btn" id="hcg-template">Download CSV template</button><label class="field"><span>Upload completed CSV</span><input id="hcg-upload-file" type="file" accept=".csv,text/csv"></label><button class="btn btn-primary" id="hcg-upload">Import groups and mappings</button><div id="hcg-import-result" class="tiny"></div></div>'+ 
-        '<div class="mt-16">'+groups.map(g=>'<div class="mb-12"><strong>'+esc(g.name)+'</strong> — '+(groupData.competencies||[]).filter(x=>x.group_id===g.id).map(x=>esc(comps.find(c=>c.id===x.competency_id)?.name||'')).join(', ')+'<div class="tiny muted">Cadres: '+(groupData.cadres||[]).filter(x=>x.group_id===g.id).map(x=>esc(cadres.find(c=>c.id===x.cadre_id)?.name||'')+' ('+esc([x.division,x.department,x.unit].filter(Boolean).join(' / ')||'Commission-wide')+')').join(', ')+'</div></div>').join('')+'</div></div></div>'+ 
+        '<div class="mt-16"><h4>Browse competency groups</h4>'+groups.map(g=>'<details class="mb-12"><summary><strong>'+esc(g.name)+'</strong> ('+(groupData.competencies||[]).filter(x=>x.group_id===g.id).length+' competencies)</summary><div class="tiny">'+(groupData.competencies||[]).filter(x=>x.group_id===g.id).map(x=>esc(comps.find(c=>c.id===x.competency_id)?.name||'')).join(', ')+'</div><div class="tiny muted">Cadres: '+(groupData.cadres||[]).filter(x=>x.group_id===g.id).map(x=>esc(cadres.find(c=>c.id===x.cadre_id)?.name||'')+' ('+esc([x.division,x.department,x.unit].filter(Boolean).join(' / ')||'Commission-wide')+')').join(', ')+'</div></details>').join('')+'</div></div></div>'+ 
         '<div class="card"><div class="card-head"><h3>Competency library & staff mapping</h3></div>'+
         (isAdmin?'<div class="card-body"><h4>Add competency</h4><label class="field"><span>Competency name</span><input id="hcot-comp-name" maxlength="200"></label><label class="field"><span>Category</span><select id="hcot-comp-cat"><option value="core">Core</option><option value="functional">Functional</option></select></label><label class="field"><span>Division (optional)</span><select id="hcot-comp-div">'+options(divisions,'Organisation-wide')+'</select></label><label class="field"><span>Department (optional)</span><select id="hcot-comp-dept" disabled><option value="">All departments</option></select></label><label class="field"><span>Unit (optional)</span><select id="hcot-comp-unit" disabled><option value="">All units / not applicable</option></select></label><label class="field"><span>Description</span><textarea id="hcot-comp-desc"></textarea></label><button class="btn btn-primary" id="hcot-comp-add">Add competency</button></div>':'')+
-        '<div class="table-wrap"><table><thead><tr><th>Competency</th><th>Category</th><th>Organisational scope</th><th>Assigned staff</th><th>Actions</th></tr></thead><tbody>'+
-        comps.map(c=>'<tr><td>'+esc(c.name)+'</td><td>'+esc(c.category)+'</td><td>'+esc(orgLabel(c))+'</td><td>'+mappings.filter(m=>m.competency_id===c.id).length+'</td><td>'+(isAdmin?'<button class="btn btn-sm hcot-comp-edit" data-id="'+c.id+'">Edit</button> <button class="btn btn-sm hcot-comp-delete" data-id="'+c.id+'">Delete</button>':'—')+'</td></tr>').join('')+
-        (comps.length?'':'<tr><td colspan="5">No competencies entered.</td></tr>')+'</tbody></table></div></div>'+
+        '<div class="card-body"><h4>Manage competency library</h4><p class="tiny muted">Search and expand a group to view its competencies. Select multiple groups or competencies, review impact, then archive. Shared competencies remain when other groups survive.</p><label class="field"><span>Search competencies</span><input id="hcot-library-search" placeholder="Search by competency name"></label><label class="field"><span>Filter by group</span><select id="hcot-library-group"><option value="">All competencies</option>'+groupOptions+'</select></label><label class="field"><input type="checkbox" id="hcot-library-select-all"> Select All matching competencies (across all pages)</label><div id="hcot-library-count" class="tiny muted"></div><div id="hcot-library-page"></div><button class="btn" id="hcot-library-prev">Previous</button> <button class="btn" id="hcot-library-next">Next</button><hr><h4>Bulk deletion</h4><div id="hcot-bulk-groups">'+groups.map(g=>'<label class="field"><input type="checkbox" class="hcot-bulk-group" value="'+g.id+'"> '+esc(g.name)+'</label>').join('')+'</div><button class="btn" id="hcot-bulk-review">Review selected deletions</button><div id="hcot-bulk-impact" class="tiny mt-16"></div><label class="field"><span>Type DELETE SELECTED COMPETENCIES to confirm</span><input id="hcot-bulk-confirm" autocomplete="off"></label><button class="btn" id="hcot-bulk-delete" disabled>Delete selected groups and competencies</button></div></div>'+
         staffGroupLookup+'<div class="card mt-16"><div class="card-head"><h3>Staff competency assignments</h3></div>'+
         (isAdmin?'<div class="card-body"><label class="field"><span>Staff member (central Staff Roster)</span><select id="hcot-map-staff">'+options(staff.filter(x=>x.active===1).map(x=>String(x.id)),'Select staff')+'</select></label><div id="hcot-map-staff-label" class="tiny muted"></div><label class="field"><span>Matching competency</span><select id="hcot-map-comp"><option value="">Select staff first</option></select></label><button class="btn btn-primary" id="hcot-map-add">Assign competency</button></div>':'')+
         '<div class="table-wrap"><table><thead><tr><th>Staff</th><th>Competency</th><th>Action</th></tr></thead><tbody>'+
         mappings.map(m=>'<tr><td>'+esc(m.full_name)+'</td><td>'+esc(m.competency_name)+'</td><td>'+(isAdmin?'<button class="btn btn-sm hcot-map-remove" data-staff="'+m.staff_id+'" data-comp="'+m.competency_id+'">Remove</button>':'—')+'</td></tr>').join('')+
         (mappings.length?'':'<tr><td colspan="3">No staff competencies mapped.</td></tr>')+'</tbody></table></div></div>'
 
+      {
+        const search=$('#hcot-library-search'),group=$('#hcot-library-group'),pageBox=$('#hcot-library-page'),count=$('#hcot-library-count')
+        const selected=new Set(),perPage=12
+        const selectAll=$('#hcot-library-select-all'),deleteButton=$('#hcot-bulk-delete'),confirmation=$('#hcot-bulk-confirm'),impact=$('#hcot-bulk-impact')
+        let reviewed=null
+        const invalidate=()=>{reviewed=null;deleteButton.disabled=true;impact.textContent='Selection changed. Click Review selected deletions to continue.'}
+        const matching=()=>{const q=search.value.trim().toLowerCase(),gid=Number(group.value),allowed=gid?new Set((groupData.competencies||[]).filter(x=>Number(x.group_id)===gid).map(x=>Number(x.competency_id))):null;return comps.filter(c=>(!allowed||allowed.has(Number(c.id)))&&c.name.toLowerCase().includes(q))}
+        const updateSelectAll=()=>{const ids=matching().map(c=>Number(c.id));selectAll.checked=ids.length>0&&ids.every(id=>selected.has(id));selectAll.indeterminate=ids.some(id=>selected.has(id))&&!selectAll.checked;selectAll.disabled=!isAdmin||ids.length===0}
+        let page=0
+        const draw=()=>{
+          const q=search.value.trim().toLowerCase(),gid=Number(group.value)
+          const allowed=gid?new Set((groupData.competencies||[]).filter(x=>Number(x.group_id)===gid).map(x=>Number(x.competency_id))):null
+          const filtered=matching()
+          const total=Math.max(1,Math.ceil(filtered.length/perPage));page=Math.min(page,total-1)
+          count.textContent=filtered.length+' matching competencies · '+selected.size+' selected · Page '+(page+1)+' of '+total
+          updateSelectAll()
+          pageBox.innerHTML=filtered.slice(page*perPage,(page+1)*perPage).map(c=>'<div class="mb-12"><label><input type="checkbox" class="hcot-bulk-comp" value="'+c.id+'" '+(selected.has(c.id)?'checked':'')+' '+(!isAdmin?'disabled':'')+'> '+esc(c.name)+'</label> <span class="tiny muted">'+esc(c.category)+' · '+esc(orgLabel(c))+'</span> '+(isAdmin?'<button class="btn btn-sm hcot-comp-edit" data-id="'+c.id+'">Edit</button> <button class="btn btn-sm hcot-comp-delete" data-id="'+c.id+'">Delete</button>':'')+'</div>').join('')||'<p class="tiny muted">No matching competencies.</p>'
+          pageBox.querySelectorAll('.hcot-bulk-comp').forEach(x=>x.onchange=()=>{if(x.checked)selected.add(Number(x.value));else selected.delete(Number(x.value));invalidate();draw()})
+          pageBox.querySelectorAll('.hcot-comp-edit').forEach(x=>x.onclick=()=>{const c=comps.find(y=>y.id===Number(x.dataset.id));if(c){const name=prompt('Edit competency name',c.name);if(name&&name!==c.name)api('/hcot/competencies/'+c.id,{method:'PATCH',body:JSON.stringify({...c,name})}).then(()=>renderHCOTSection('competencies')).catch(e=>toast(e.message,true))}})
+          pageBox.querySelectorAll('.hcot-comp-delete').forEach(x=>x.onclick=async()=>{const c=comps.find(y=>y.id===Number(x.dataset.id));if(!c||!confirm('Archive '+c.name+' from the active library? Historical assessments will remain.'))return;try{await api('/hcot/competencies/'+c.id,{method:'DELETE'});renderHCOTSection('competencies')}catch(e){toast(e.message,true)}})
+        }
+        selectAll.onchange=()=>{const ids=matching().map(c=>Number(c.id));if(selectAll.checked){if(new Set([...selected,...ids]).size>500){selectAll.checked=false;return toast('Maximum 500 competencies per operation. Narrow the search and select a smaller set.',true)}ids.forEach(id=>selected.add(id))}else ids.forEach(id=>selected.delete(id));invalidate();draw()}
+        search.oninput=()=>{page=0;draw()};group.onchange=()=>{page=0;draw()}
+        $('#hcot-library-prev').onclick=()=>{page=Math.max(0,page-1);draw()}
+        $('#hcot-library-next').onclick=()=>{page++;draw()}
+        draw()
+        if(isAdmin){
+          const selectedGroups=()=>Array.from($$('.hcot-bulk-group')).filter(x=>x.checked).map(x=>Number(x.value))
+          const request=()=>({group_ids:selectedGroups(),competency_ids:[...selected].sort((a,b)=>a-b)})
+          const refreshDelete=()=>{deleteButton.disabled=reviewed!==JSON.stringify(request())||confirmation.value!=='DELETE SELECTED COMPETENCIES'}
+          confirmation.oninput=refreshDelete
+          $$('.hcot-bulk-group').forEach(x=>x.onchange=invalidate)
+          $('#hcot-bulk-review').onclick=async()=>{
+            reviewed=null;deleteButton.disabled=true
+            try{
+              const data=await api('/hcot/competencies/bulk-delete',{method:'POST',body:JSON.stringify({...request(),commit:false})})
+              reviewed=JSON.stringify(request())
+              impact.textContent='Groups: '+data.impact.groups+'; competencies to archive: '+data.impact.competencies_to_archive+'; shared competencies preserved: '+data.impact.shared_competencies_preserved+'. Enter the confirmation phrase to enable deletion.'
+              refreshDelete()
+            }catch(e){impact.textContent=e.message;toast(e.message,true)}
+          }
+          deleteButton.onclick=async()=>{
+            if(reviewed!==JSON.stringify(request())||confirmation.value!=='DELETE SELECTED COMPETENCIES')return toast('Review the current selection and enter the exact confirmation phrase.',true)
+            if(!confirm('Archive selected competencies and delete selected groups? Historical assessments will remain.'))return
+            deleteButton.disabled=true
+            try{await api('/hcot/competencies/bulk-delete',{method:'POST',body:JSON.stringify({...request(),commit:true,confirm:'DELETE SELECTED COMPETENCIES'})});toast('Bulk deletion completed');renderHCOTSection('competencies')}
+            catch(e){refreshDelete();toast(e.message,true)}
+          }
+        }
+      }
+      if(isAdmin){
+        const resetPanel=document.createElement('div')
+        resetPanel.className='card mt-16'
+        resetPanel.innerHTML='<div class="card-head"><h3>Administrator — Reset active staff mappings</h3></div><div class="card-body"><p class="tiny muted">Preview-only operation. Removes staff cadre, direct competency and line-manager assignments. Cadre-to-group rules, competency target policies, staff, completed assessments and training history remain. Create and verify a Preview D1 backup before proceeding.</p><button class="btn" id="hcot-reset-preflight">Review affected mappings</button><div id="hcot-reset-summary" class="mt-16 tiny"></div><label class="field"><span>Type RESET ACTIVE STAFF MAPPINGS to confirm</span><input id="hcot-reset-confirm" autocomplete="off"></label><button class="btn" id="hcot-reset-execute" disabled>Reset active mappings</button></div>'
+        el.appendChild(resetPanel)
+        const previewBtn=resetPanel.querySelector('#hcot-reset-preflight')
+        const executeBtn=resetPanel.querySelector('#hcot-reset-execute')
+        const summary=resetPanel.querySelector('#hcot-reset-summary')
+        const phrase=resetPanel.querySelector('#hcot-reset-confirm')
+        let reviewed=false
+        phrase.oninput=()=>{executeBtn.disabled=!reviewed||phrase.value!=='RESET ACTIVE STAFF MAPPINGS'}
+        previewBtn.onclick=async()=>{
+          reviewed=false;executeBtn.disabled=true
+          try{
+            const data=await api('/hcot/admin/staff-mapping-reset/preview')
+            summary.textContent=Object.entries(data.counts||{}).map(([k,v])=>k.replace(/_/g,' ')+': '+v).join(' | ')
+            reviewed=true;executeBtn.disabled=phrase.value!=='RESET ACTIVE STAFF MAPPINGS'
+          }catch(e){summary.textContent='Reset unavailable: '+e.message;toast(e.message,true)}
+        }
+        executeBtn.onclick=async()=>{
+          if(!reviewed||phrase.value!=='RESET ACTIVE STAFF MAPPINGS')return
+          if(!confirm('Permanently clear ALL active staff mappings in Preview? This cannot be undone without restoring a backup.'))return
+          executeBtn.disabled=true
+          try{
+            const result=await api('/hcot/admin/staff-mapping-reset',{method:'POST',body:JSON.stringify({confirm:phrase.value})})
+            toast('Active mappings cleared; historical assessments retained')
+            summary.textContent='Reset completed. Changed rows by operation: '+(result.changed||[]).join(', ')
+            phrase.value='';reviewed=false
+          }catch(e){toast(e.message,true);summary.textContent='Reset failed: '+e.message}
+        }
+      }
       if(isAdmin){
         const [policy,levelPolicy]=await Promise.all([api('/hcot/mapping-targets'),api('/hcot/competency-level-target-policy')])
         const levels=['Basic','Intermediate','Advanced','Expert']
@@ -1248,8 +1327,17 @@ async function renderHCOTSection(section) {
         $('#hcg-delete-group').onclick=async()=>{
           const id=Number($('#hcg-manage-group').value),g=groups.find(x=>x.id===id)
           if(!g){toast('Select a competency group.',true);return}
-          if(!confirm('Delete competency group "'+g.name+'"? Its group memberships and cadre links will be removed. Individual competencies remain in the library.'))return
-          try{await api('/hcot/competency-groups/'+id,{method:'DELETE'});toast('Group deleted');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}
+          try{const preview=await api('/hcot/competencies/bulk-delete',{method:'POST',body:JSON.stringify({group_ids:[id],competency_ids:[],commit:false})});if(!confirm('Delete group '+g.name+'? '+preview.impact.competencies_to_archive+' orphan competencies will be archived; '+preview.impact.shared_competencies_preserved+' shared competencies will remain. Historical assessments are preserved.'))return;await api('/hcot/competencies/bulk-delete',{method:'POST',body:JSON.stringify({group_ids:[id],competency_ids:[],commit:true,confirm:'DELETE SELECTED COMPETENCIES'})});toast('Group deleted and orphan competencies archived');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}
+        }
+        $('#hcg-unlink-comp').onclick=async()=>{
+          const groupId=Number($('#hcg-comp-group').value),compId=Number($('#hcg-comp').value)
+          if(!groupId||!compId)return toast('Select a group and an individual competency first.',true)
+          const name=comps.find(c=>c.id===compId)?.name||'this competency'
+          if(!confirm('Remove '+name+' from this group? The competency library and historical assessments will remain.'))return
+          try{
+            await api('/hcot/competency-groups/'+groupId+'/competencies/'+compId,{method:'DELETE'})
+            toast('Competency removed from group');renderHCOTSection('competencies')
+          }catch(e){toast(e.message,true)}
         }
         $('#hcg-link-comp').onclick=async()=>{try{await api('/hcot/competency-groups/assign-competency',{method:'POST',body:JSON.stringify({group_id:Number($('#hcg-comp-group').value),competency_id:Number($('#hcg-comp').value)})});toast('Competency added to group');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
         $('#hcg-link-cadre').onclick=async()=>{try{await api('/hcot/competency-groups/assign-cadre',{method:'POST',body:JSON.stringify({group_id:Number($('#hcg-cadre-group').value),cadre_id:Number($('#hcg-cadre').value),division:$('#hcg-scope-div').value,department:$('#hcg-scope-dept').value,unit:$('#hcg-scope-unit').value})});toast('Group linked to cadre');renderHCOTSection('competencies')}catch(e){toast(e.message,true)}}
@@ -1288,8 +1376,8 @@ async function renderHCOTSection(section) {
         })
         $$('.hcot-comp-delete').forEach(btn=>btn.onclick=async()=>{
           const c=comps.find(x=>String(x.id)===btn.dataset.id)
-          if(!c||!confirm('Delete competency "'+c.name+'"? This cannot be undone. Assigned competencies must be unmapped first.'))return
-          try{await api('/hcot/competencies/'+c.id,{method:'DELETE'});toast('Competency deleted');renderHCOTSection('competencies')}
+          if(!c||!confirm('Remove competency "'+c.name+'" from the active library? Current mappings will be cleared. Historical assessments and performance records will be preserved.'))return
+          try{await api('/hcot/competencies/'+c.id,{method:'DELETE'});toast('Competency removed from active library');renderHCOTSection('competencies')}
           catch(e){toast(e.message,true)}
         })
         $('#hcot-comp-add').onclick=async()=>{try{
@@ -1762,6 +1850,7 @@ async function renderRoster(el) {
 
   $('#topbar-actions').innerHTML = `
     <button class="btn" id="r-directory">Manage divisions, departments & units</button>
+    <button class="btn" id="r-archived">Archived staff</button>
     <button class="btn" id="r-template">Download bulk-load template</button>
      <button class="btn" id="r-import">${ico('upload', 15)} Import list</button>
     <button class="btn btn-primary" id="r-add">${ico('plus', 15)} Add staff member</button>`
@@ -1778,6 +1867,7 @@ async function renderRoster(el) {
   $('#r-add').addEventListener('click', () => staffModal())
   $('#r-import').addEventListener('click', () => rosterImportModal())
   $('#r-directory').addEventListener('click', () => staffDirectoryModal())
+  $('#r-archived').addEventListener('click', () => archivedStaffModal())
 
   el.innerHTML = `
     <div class="card">
@@ -1827,12 +1917,35 @@ async function renderRoster(el) {
   $$('[data-del]', el).forEach((b) =>
     b.addEventListener('click', async () => {
       const s = state.staff.find((x) => x.id === Number(b.dataset.del))
-      if (!confirm(`Remove ${s.full_name} from the roster? Their submission records for all periods will also be deleted.`)) return
+      if (!confirm(`Remove ${s.full_name} from the roster? Their historical reports and assessments will be preserved in an archived profile.`)) return
       await api('/staff/' + s.id, { method: 'DELETE' })
       toast('Removed')
       navigate('roster', true)
     })
   )
+}
+
+async function archivedStaffModal() {
+  const m=modal({title:'Archived staff profiles',wide:true,
+    body:'<p class="tiny muted mb-12">Archived staff are excluded from the active roster. Historical training and assessment records remain attached to their original staff IDs.</p><div id="archived-staff-content">Loading archived profiles…</div>',
+    footer:'<button class="btn" data-close>Close</button>'})
+  const load=async()=>{
+    const holder=m.$('#archived-staff-content')
+    try{
+      const data=await api('/staff/archived')
+      const people=data.staff||[]
+      holder.innerHTML=people.length?'<div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Archived</th><th>Action</th></tr></thead><tbody>'+
+        people.map(p=>'<tr><td>'+esc(p.full_name)+'</td><td>'+esc(p.email)+'</td><td>'+esc(p.archived_at||'')+'</td><td><button class="btn btn-sm" data-restore="'+p.id+'">Restore</button></td></tr>').join('')+
+        '</tbody></table></div>':'<p class="tiny muted">No archived staff profiles.</p>'
+      holder.querySelectorAll('[data-restore]').forEach(btn=>btn.onclick=async()=>{
+        const person=people.find(p=>String(p.id)===btn.dataset.restore)
+        if(!person||!confirm('Restore '+person.full_name+' to the active roster? Previous assignments will not be restored automatically.'))return
+        try{await api('/staff/'+person.id+'/restore',{method:'POST'});toast('Staff profile restored');await load();navigate('roster',true)}
+        catch(e){toast(e.message,true)}
+      })
+    }catch(e){holder.textContent='Unable to load archived staff: '+e.message;toast(e.message,true)}
+  }
+  await load()
 }
 
 async function staffDirectoryModal() {

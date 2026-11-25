@@ -10,13 +10,13 @@ test('competency update is admin-only and rejects incompatible existing mappings
 })
 test('competency delete is admin-only and protects staff mappings',()=>{
  assert.match(api,/api\.delete\('\/hcot\/competencies\/:id'/)
- assert.match(api,/Remove its staff assignments before deleting it/)
- assert.match(api,/DELETE FROM hcot_competencies WHERE id=\? AND NOT EXISTS/)
+ assert.match(api,/UPDATE hcot_competencies SET archived_at=CURRENT_TIMESTAMP/)
+ assert.match(api,/DELETE FROM hcot_staff_competencies WHERE competency_id=\?/); assert.match(api,/history_preserved:true/)
 })
 test('admin UI offers edit and delete with explicit confirmation',()=>{
  assert.match(ui,/hcot-comp-edit/)
  assert.match(ui,/hcot-comp-delete/)
  assert.match(ui,/method:'PATCH'/)
  assert.match(ui,/method:'DELETE'/)
- assert.match(ui,/confirm\('Delete competency/)
+ assert.match(ui,/confirm\('Archive /)
 })
