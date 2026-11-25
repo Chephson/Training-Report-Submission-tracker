@@ -430,6 +430,15 @@ async function validateStaffDirectory(db:D1Database, division:string|null, depar
   return null
 }
 
+/* Import-only diagnostics. Never modify the organisational directory to make a CSV pass. */
+async function explainCompetencyImportScope(db:D1Database,division:string|null,department:string|null,unit:string|null,error:string){
+  const entered='Division "'+(division||'(blank)')+'", Department "'+(department||'(blank)')+'", Unit "'+(unit||'(blank)')+'". '
+  if(!unit||!error.includes('Unit must belong'))return entered+error
+  const matches=await db.prepare(`SELECT division_name AS division,department_name AS department FROM staff_units WHERE LOWER(TRIM(name))=LOWER(TRIM(?)) UNION SELECT team AS division,role AS department FROM staff WHERE LOWER(TRIM(unit))=LOWER(TRIM(?)) AND team IS NOT NULL AND role IS NOT NULL LIMIT 8`).bind(unit,unit).all<{division:string;department:string}>()
+  const locations=(matches.results||[]).map(x=>x.division+' / '+x.department)
+  return entered+error+(locations.length?' Existing directory/roster associations for this Unit: '+locations.join('; ')+'.':' This Unit was not found in the directory or staff roster.')+' Correct the CSV hierarchy or the Organisational Directory; no rows have been imported.'
+}
+
 /* ---------------- staff roster ---------------- */
 /* Preview-only roster reset preflight. Read-only: never deletes data. */
 api.get('/hcot/preview-roster-reset/preflight', async c => {
@@ -1186,7 +1195,7 @@ api.post('/hcot/competency-groups/import',async c=>{
     }
     if((department&&!division)||(unit&&!department)){errors.push('Row '+line+': division is required for department and department for unit.');continue}
     const scopeError=await validateStaffDirectory(c.env.DB,division||null,department||null,unit||null)
-    if(scopeError){errors.push('Row '+line+': '+scopeError);continue}
+    if(scopeError){errors.push('Row '+line+': '+await explainCompetencyImportScope(c.env.DB,division||null,department||null,unit||null,scopeError));continue}
     prepared.push({code,group,groupDescription,competency,category,competencyDescription,cadreId:cadreCache.get(cadreKey)!,division:division||null,department:department||null,unit:unit||null})
   }
   if(errors.length)return c.json({error:'Import rejected; no rows applied.',errors:errors.slice(0,100),error_count:errors.length},400)
